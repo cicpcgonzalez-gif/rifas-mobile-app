@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "MegaRifas",
+    "slug": "megarifas-mobile-rifaapk",
+    "owner": "rifaapk",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "jsEngine": "hermes",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "android": {
+      "package": "com.megarifas.app",
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff",
+        "resizeMode": "contain"
+      },
+      "permissions": [
+        "INTERNET",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "VIBRATE",
+        "INTERNET",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "VIBRATE"
+      ],
+      "runtimeVersion": "1.0.0"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.megarifas.app",
+      "buildNumber": "1.0.1",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6d2e9b8a-a626-4761-baa1-0b61882210ec"
+      }
+    }
+  }
+}
