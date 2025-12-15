@@ -28,7 +28,7 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="com.megarifas.app"/>
-        <data android:scheme="exp+megarifasapps"/>
+        <data android:scheme="exp+megarifas-mobile-rifaapk"/>
       </intent-filter>
     </activity>
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
