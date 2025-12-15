@@ -19,6 +19,7 @@ import RaffleDetailScreen from './screens/RaffleDetailScreen';
 import LegalScreen from './screens/LegalScreen';
 import { useApi } from './hooks/useApi';
 import { ToastProvider } from './components/UI';
+import ConfettiOverlay from './components/ConfettiOverlay';
 
 const Stack = createNativeStackNavigator();
 
@@ -57,6 +58,8 @@ function MainContent() {
   const [rememberEnabled, setRememberEnabled] = useState(false);
   const [modulesConfig, setModulesConfig] = useState({ user: { raffles: true, wallet: true, profile: true }, admin: { raffles: true }, superadmin: { audit: true, branding: true, modules: true } });
   const [pushToken, setPushToken] = useState(null);
+  const [winData, setWinData] = useState(null);
+  const [showConfetti, setShowConfetti] = useState(false);
 
   const persistTokens = useCallback(
     async (at, rt, usr, opts = {}) => {
@@ -94,8 +97,23 @@ function MainContent() {
     (async () => {
       const { res, data } = await api('/modules');
       if (res.ok) setModulesConfig(data);
+      
+      // Check for pending wins
+      const winRes = await api('/me/pending-wins');
+      if (winRes.res.ok && winRes.data.win) {
+        setWinData(winRes.data.win);
+        setShowConfetti(true);
+      }
     })();
   }, [accessToken, api]);
+
+  const handleCloseConfetti = async () => {
+    setShowConfetti(false);
+    if (winData) {
+      await api(`/me/ack-win/${winData.id}`, { method: 'POST' });
+      setWinData(null);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -177,8 +195,9 @@ function MainContent() {
     );
 
   return (
-    <NavigationContainer>
-      <StatusBar style="auto" />
+    <>
+      <NavigationContainer>
+        <StatusBar style="auto" />
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: palette.background },
@@ -246,7 +265,13 @@ function MainContent() {
           {(props) => <LegalScreen {...props} />}
         </Stack.Screen>
       </Stack.Navigator>
-    </NavigationContainer>
+      </NavigationContainer>
+      <ConfettiOverlay
+        visible={showConfetti}
+        onClose={handleCloseConfetti}
+        winData={winData}
+      />
+    </>
   );
 }
 

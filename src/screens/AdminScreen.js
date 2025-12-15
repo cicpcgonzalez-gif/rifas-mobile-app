@@ -36,7 +36,7 @@ const ProgressBar = ({ progress, color }) => (
 
 const STANDARD_ASPECT = [16, 9];
 const MAX_GALLERY_IMAGES = 5;
-const normalizeImage = async (asset, { maxWidth = 1280, compress = 0.82 } = {}) => {
+const normalizeImage = async (asset, { maxWidth = 1024, compress = 0.7 } = {}) => {
   const targetWidth = Math.min(maxWidth, asset?.width || maxWidth);
   const manipResult = await ImageManipulator.manipulateAsync(
     asset.uri,
@@ -124,12 +124,10 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       { id: 'push', title: 'Notificaciones', icon: 'notifications-outline', color: '#f472b6' },
       { id: 'security', title: 'Cód. Seguridad', icon: 'shield-checkmark-outline', color: '#34d399' },
       { id: 'lottery', title: 'Sorteo en Vivo', icon: 'dice-outline', color: '#f87171' },
-      { id: 'raffles', title: 'Crear y Pagos', icon: 'create-outline', color: '#a78bfa' },
+      { id: 'raffles', title: 'Gestión de Rifas', icon: 'create-outline', color: '#a78bfa' },
       { id: 'dashboard', title: 'Dashboard', icon: 'speedometer-outline', color: '#22c55e' },
-      { id: 'progress', title: 'Progreso', icon: 'bar-chart-outline', color: '#38bdf8' },
       { id: 'payments', title: 'Validar Pagos', icon: 'cash-outline', color: '#10b981' },
       { id: 'tickets', title: 'Verificador', icon: 'qr-code-outline', color: '#f97316' },
-      { id: 'style', title: 'Estilo', icon: 'color-fill-outline', color: '#fbbf24' },
       { id: 'news', title: 'Novedades', icon: 'newspaper-outline', color: '#60a5fa' },
     ];
     
@@ -178,6 +176,12 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [endPickerVisible, setEndPickerVisible] = useState(false);
   const [startDateValue, setStartDateValue] = useState(new Date());
   const [endDateValue, setEndDateValue] = useState(new Date());
+  
+  // Winner Declaration State
+  const [winnerModalVisible, setWinnerModalVisible] = useState(false);
+  const [winningNumberInput, setWinningNumberInput] = useState('');
+  const [winnerRaffleId, setWinnerRaffleId] = useState(null);
+  const [declaringWinner, setDeclaringWinner] = useState(false);
 
   const LOTTERIES = [
     'Super Gana (Lotería del Táchira)',
@@ -280,19 +284,10 @@ export default function AdminScreen({ api, user, modulesConfig }) {
 
   const announceWinner = () => {
     if (!lotteryWinner) return;
-    const buyer = lotteryWinner.buyer || lotteryWinner.user || {};
-    const name = buyer.firstName ? `${buyer.firstName} ${buyer.lastName}` : buyer.name || 'Anónimo';
-    
-    setWinnerForm({
-      raffleId: lotteryCheck.raffleId,
-      ticketNumber: String(lotteryWinner.number),
-      winnerName: name,
-      prize: '', 
-      testimonial: '',
-      photoUrl: ''
-    });
-    
-    Alert.alert('Listo', 'Datos precargados en el formulario de abajo. Completa el premio y la foto.');
+    setWinnerRaffleId(lotteryCheck.raffleId);
+    setWinningNumberInput(String(lotteryWinner.number));
+    setWinnerPhoto(null);
+    setWinnerModalVisible(true);
   };
 
   const proceedAnnouncement = () => {
@@ -794,15 +789,41 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     const endpoint = raffleForm.id ? `/admin/raffles/${raffleForm.id}` : '/raffles';
     const method = raffleForm.id ? 'PATCH' : 'POST';
     const { res, data } = await api(endpoint, { method, body: JSON.stringify(payload) });
+    
     if (res.ok) {
-      Alert.alert('Listo', raffleForm.id ? 'Rifa actualizada.' : 'Rifa creada.', [
-        { text: 'OK', onPress: () => {
-            resetRaffleForm();
-            loadRaffles();
-            loadTickets();
-            setActiveSection(null);
-        }}
-      ]);
+      // Save style if we have style data
+      const raffleId = raffleForm.id || data.id || data.raffle?.id;
+      let styleError = null;
+      
+      if (raffleId) {
+        const stylePayload = {
+          style: {
+            bannerImage: styleForm.bannerImage,
+            gallery: styleForm.gallery,
+            themeColor: styleForm.themeColor,
+            whatsapp: styleForm.whatsapp,
+            instagram: styleForm.instagram
+          }
+        };
+        const styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(stylePayload) });
+        if (!styleRes.res.ok) {
+          styleError = styleRes.data?.error || 'Error al guardar las imágenes.';
+          console.log('Style upload error:', styleError);
+        }
+      }
+
+      if (styleError) {
+        Alert.alert('Rifa guardada con advertencia', `La rifa se guardó, pero hubo un problema con las imágenes: ${styleError}\nIntenta subir imágenes más ligeras o editar la rifa nuevamente.`);
+      } else {
+        Alert.alert('Listo', raffleForm.id ? 'Rifa actualizada correctamente.' : 'Rifa creada correctamente.', [
+          { text: 'OK', onPress: () => {
+              resetRaffleForm();
+              loadRaffles();
+              loadTickets();
+              setActiveSection(null);
+          }}
+        ]);
+      }
     } else {
       Alert.alert('Ups', data?.error || 'No se pudo guardar.');
     }
@@ -910,6 +931,55 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     setMetricsLoading(false);
   };
 
+  const [winnerPhoto, setWinnerPhoto] = useState(null);
+
+  const pickWinnerPhoto = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 0.8,
+      base64: true,
+    });
+
+    if (!result.canceled) {
+      setWinnerPhoto(result.assets[0]);
+    }
+  };
+
+  const openWinnerModal = (raffleId) => {
+    setWinnerRaffleId(raffleId);
+    setWinningNumberInput('');
+    setWinnerPhoto(null);
+    setWinnerModalVisible(true);
+  };
+
+  const declareWinner = async () => {
+    if (!winningNumberInput) return Alert.alert('Error', 'Ingresa el número ganador');
+    
+    setDeclaringWinner(true);
+    const body = {
+      winningNumber: winningNumberInput,
+      proof: winnerPhoto ? `data:image/jpeg;base64,${winnerPhoto.base64}` : null
+    };
+
+    const { res, data } = await api(`/raffles/${winnerRaffleId}/declare-winner`, {
+      method: 'POST',
+      body: JSON.stringify(body)
+    });
+    
+    setDeclaringWinner(false);
+    setWinnerModalVisible(false);
+    
+    if (res.ok) {
+      Alert.alert('Éxito', data.message);
+      loadRaffles();
+      loadTickets();
+    } else {
+      Alert.alert('Error', data.error || 'No se pudo declarar el ganador');
+    }
+  };
+
   const closeRaffle = async (raffleId) => {
     setClosingId(raffleId);
     const { res, data } = await api(`/raffles/${raffleId}/close`, { method: 'POST' });
@@ -954,15 +1024,396 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   return (
     <LinearGradient colors={['#0F172A', '#1E1B4B']} style={styles.container}>
       <SafeAreaView style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
+          <Text style={[styles.title, { marginBottom: 0 }]}>{user?.role === 'superadmin' ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
+          {techSupport && (
+            <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
+              <Ionicons name="help-circle-outline" size={28} color="#fff" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {activeSection === 'sa_users' ? (
+            <View style={{ flex: 1, paddingHorizontal: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity onPress={() => {
+                    if (viewUser) setViewUser(null);
+                    else setActiveSection(null);
+                  }}>
+                    <Ionicons name="arrow-back" size={24} color="#fff" />
+                  </TouchableOpacity>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>
+                    {viewUser ? 'Hoja de Vida' : 'Gestión de Usuarios'}
+                  </Text>
+              </View>
+              
+              {viewUser ? (
+                <ScrollView>
+                  <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, borderRadius: 12, marginBottom: 16 }}>
+                      <View style={{ alignItems: 'center', marginBottom: 16 }}>
+                          <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                              <Text style={{ fontSize: 32, fontWeight: 'bold', color: '#fff' }}>
+                                  {(viewUser.name || 'U').charAt(0).toUpperCase()}
+                              </Text>
+                          </View>
+                          <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#fff' }}>{viewUser.name}</Text>
+                          <Text style={{ color: palette.muted }}>{viewUser.email}</Text>
+                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                              <View style={{ backgroundColor: viewUser.role === 'admin' ? '#60a5fa' : '#94a3b8', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#000' }}>{viewUser.role.toUpperCase()}</Text>
+                              </View>
+                              <View style={{ backgroundColor: viewUser.active ? '#4ade80' : '#f87171', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
+                                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#000' }}>{viewUser.active ? 'ACTIVO' : 'INACTIVO'}</Text>
+                              </View>
+                          </View>
+                      </View>
+
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)', paddingTop: 16 }}>
+                          <TouchableOpacity 
+                              onPress={() => {
+                                const newStatus = !viewUser.active;
+                                updateUserStatus(viewUser.id, { active: newStatus });
+                                setViewUser(prev => ({ ...prev, active: newStatus }));
+                              }}
+                              style={{ alignItems: 'center' }}
+                          >
+                              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: viewUser.active ? 'rgba(248, 113, 113, 0.2)' : 'rgba(74, 222, 128, 0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
+                                  <Ionicons name={viewUser.active ? "ban" : "checkmark"} size={20} color={viewUser.active ? "#f87171" : "#4ade80"} />
+                              </View>
+                              <Text style={{ color: '#fff', fontSize: 12 }}>{viewUser.active ? 'Bloquear' : 'Activar'}</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity 
+                              onPress={() => {
+                                const newStatus = !viewUser.verified;
+                                toggleUserVerification(viewUser.id, viewUser.verified);
+                                setViewUser(prev => ({ ...prev, verified: newStatus }));
+                              }}
+                              style={{ alignItems: 'center' }}
+                          >
+                              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: viewUser.verified ? 'rgba(251, 191, 36, 0.2)' : 'rgba(34, 211, 238, 0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
+                                  <Ionicons name={viewUser.verified ? "close" : "checkmark-done"} size={20} color={viewUser.verified ? "#fbbf24" : "#22d3ee"} />
+                              </View>
+                              <Text style={{ color: '#fff', fontSize: 12 }}>{viewUser.verified ? 'Revocar' : 'Verificar'}</Text>
+                          </TouchableOpacity>
+                      </View>
+                  </View>
+                  <Text style={styles.section}>Historial Reciente</Text>
+                  <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 16 }}>
+                      <Text style={{ color: palette.muted, textAlign: 'center', fontStyle: 'italic' }}>
+                          No hay transacciones recientes registradas para este usuario.
+                      </Text>
+                  </View>
+                </ScrollView>
+              ) : (
+                <FlatList
+                  data={filteredUsers}
+                  keyExtractor={(item) => item.id || Math.random().toString()}
+                  renderItem={({ item: u }) => (
+                    <TouchableOpacity 
+                      onPress={() => setViewUser(u)}
+                      style={{ backgroundColor: u.role === 'admin' || u.role === 'superadmin' ? 'rgba(96, 165, 250, 0.1)' : 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8, borderWidth: u.role === 'admin' || u.role === 'superadmin' ? 1 : 0, borderColor: 'rgba(96, 165, 250, 0.3)' }}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View>
+                          <Text style={{ color: '#fff', fontWeight: 'bold' }}>{u.name || 'Sin nombre'}</Text>
+                          <Text style={{ color: palette.muted, fontSize: 12 }}>{u.email}</Text>
+                          <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
+                            <View style={{ backgroundColor: u.role === 'superadmin' ? '#c084fc' : u.role === 'admin' ? '#60a5fa' : '#94a3b8', paddingHorizontal: 6, borderRadius: 4 }}>
+                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{(u.role || 'user').toUpperCase()}</Text>
+                            </View>
+                            <View style={{ backgroundColor: u.active ? '#4ade80' : '#f87171', paddingHorizontal: 6, borderRadius: 4 }}>
+                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{u.active ? 'ACTIVO' : 'INACTIVO'}</Text>
+                            </View>
+                            {u.role !== 'admin' && u.role !== 'superadmin' && (
+                              <View style={{ backgroundColor: u.verified ? '#22d3ee' : '#fbbf24', paddingHorizontal: 6, borderRadius: 4 }}>
+                                <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{u.verified ? 'VERIFICADO' : 'NO VERIF.'}</Text>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                        <Ionicons name="chevron-forward" size={20} color={palette.muted} />
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                  ListHeaderComponent={
+                    <>
+                      <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 12, marginBottom: 16 }}>
+                        <Text style={styles.section}>Crear Nuevo Usuario</Text>
+                        <TextInput style={styles.input} placeholder="Email" value={createForm.email} onChangeText={(v) => setCreateForm(s => ({ ...s, email: v }))} autoCapitalize="none" />
+                        <TextInput style={styles.input} placeholder="Contraseña" value={createForm.password} onChangeText={(v) => setCreateForm(s => ({ ...s, password: v }))} secureTextEntry />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <TextInput style={[styles.input, { flex: 1 }]} placeholder="Nombre" value={createForm.firstName} onChangeText={(v) => setCreateForm(s => ({ ...s, firstName: v }))} />
+                          <TextInput style={[styles.input, { flex: 1 }]} placeholder="Apellido" value={createForm.lastName} onChangeText={(v) => setCreateForm(s => ({ ...s, lastName: v }))} />
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                          <Text style={{ color: '#fff' }}>Rol: {createForm.role}</Text>
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <TouchableOpacity onPress={() => setCreateForm(s => ({ ...s, role: 'user' }))} style={{ padding: 8, backgroundColor: createForm.role === 'user' ? palette.primary : '#334155', borderRadius: 8 }}><Text style={{ color: '#fff' }}>User</Text></TouchableOpacity>
+                            <TouchableOpacity onPress={() => setCreateForm(s => ({ ...s, role: 'admin' }))} style={{ padding: 8, backgroundColor: createForm.role === 'admin' ? palette.primary : '#334155', borderRadius: 8 }}><Text style={{ color: '#fff' }}>Admin</Text></TouchableOpacity>
+                          </View>
+                        </View>
+                        <FilledButton title={creating ? 'Creando...' : 'Crear Usuario'} onPress={createAccount} loading={creating} disabled={creating} icon={<Ionicons name="person-add-outline" size={18} color="#fff" />} />
+                      </View>
+
+                      <Text style={styles.section}>Lista de Usuarios ({filteredUsers.length})</Text>
+                      <TextInput 
+                        style={styles.input} 
+                        placeholder="Buscar por nombre o email..." 
+                        value={userSearch} 
+                        onChangeText={filterUsers} 
+                      />
+                    </>
+                  }
+                />
+              )}
+            </View>
+        ) : activeSection === 'tickets' ? (
+            <View style={{ flex: 1, paddingHorizontal: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Gestión de Tickets</Text>
+              </View>
+              
+              <FlatList
+                data={tickets}
+                keyExtractor={(item) => item.id || Math.random().toString()}
+                renderItem={({ item: t }) => {
+                    const buyer = t.buyer || t.user || {};
+                    const raffleDigits = raffles.find(r => r.id === t.raffleId)?.digits;
+                    const statusColor = t.status === 'approved' || t.status === 'aprobado' ? '#4ade80' : t.status === 'ganador' ? '#fbbf24' : t.status === 'rejected' ? '#f87171' : '#fbbf24';
+                    return (
+                      <View style={{ marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? t.serialNumber ?? '0', raffleDigits)}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: statusColor }}>
+                            <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time'} size={14} color={statusColor} />
+                            <Text style={{ color: statusColor, fontWeight: '700', marginLeft: 6 }}>{t.status}</Text>
+                          </View>
+                        </View>
+                        <Text style={{ color: '#cbd5e1', fontSize: 12, marginTop: 2 }}>Rifa: {t.raffleTitle || t.raffleId}</Text>
+                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Referencia: {t.reference || '—'}</Text>
+                        <View style={{ marginTop: 6 }}>
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>Comprador</Text>
+                          <Text style={{ color: '#fff', fontWeight: '700' }}>{buyer.firstName || buyer.name || t.user?.name || 'Usuario'} {buyer.lastName || ''}</Text>
+                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || t.user?.email || '—'}</Text>
+                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.phone || buyer.cedula || '—'}</Text>
+                        </View>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Fecha: {t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</Text>
+                        {t.status === 'ganador' && winnerInfo?.ticket === (t.number || t.ticketNumber) ? (
+                          <Text style={{ color: '#fbbf24', fontWeight: '700', marginTop: 4 }}>Ganador anunciado</Text>
+                        ) : null}
+                      </View>
+                    );
+                }}
+                ListHeaderComponent={
+                  <>
+                    {/* VERIFICADOR RÁPIDO */}
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: 16, borderRadius: 16, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+                        <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>Verificador Rápido</Text>
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TextInput 
+                            style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 18, fontWeight: 'bold', textAlign: 'center' }]} 
+                            placeholder="# Ticket" 
+                            value={verifierInput} 
+                            onChangeText={setVerifierInput} 
+                            keyboardType="numeric"
+                        />
+                        <TouchableOpacity 
+                            onPress={() => {
+                            if (!verifierInput) return;
+                            const found = tickets.find(t => String(t.number) === verifierInput || String(t.serialNumber) === verifierInput);
+                            if (found) {
+                                setVerifierResult({ status: 'found', ticket: found });
+                            } else {
+                                setVerifierResult({ status: 'not_found' });
+                            }
+                            }}
+                            style={{ backgroundColor: palette.primary, paddingHorizontal: 20, justifyContent: 'center', borderRadius: 12 }}
+                        >
+                            <Ionicons name="scan-outline" size={24} color="#fff" />
+                        </TouchableOpacity>
+                        </View>
+                        
+                        {verifierResult && (
+                        <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: verifierResult.status === 'found' ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: verifierResult.status === 'found' ? '#4ade80' : '#f87171' }}>
+                            {verifierResult.status === 'found' ? (
+                            <>
+                                <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡TICKET VÁLIDO!</Text>
+                                <Text style={{ color: '#fff', textAlign: 'center', marginTop: 4 }}>Dueño: {verifierResult.ticket.buyer?.firstName || verifierResult.ticket.user?.name || 'Desconocido'}</Text>
+                                <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Estado: {(verifierResult.ticket.status || 'unknown').toUpperCase()}</Text>
+                            </>
+                            ) : (
+                            <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>NO ENCONTRADO</Text>
+                            )}
+                        </View>
+                        )}
+                    </View>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={ticketFilters.raffleId} onChangeText={(v) => setTicketFilters(s => ({ ...s, raffleId: v }))} keyboardType="numeric" />
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={ticketFilters.reference} onChangeText={(v) => setTicketFilters(s => ({ ...s, reference: v }))} />
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Teléfono" value={ticketFilters.phone} onChangeText={(v) => setTicketFilters(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Cédula" value={ticketFilters.cedula} onChangeText={(v) => setTicketFilters(s => ({ ...s, cedula: v }))} keyboardType="numeric" />
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Email" value={ticketFilters.email} onChangeText={(v) => setTicketFilters(s => ({ ...s, email: v }))} autoCapitalize="none" />
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+                        {[
+                        { id: '', label: 'Todos' },
+                        { id: 'approved', label: 'Aprobados' },
+                        { id: 'pending', label: 'Pendientes' },
+                        { id: 'rejected', label: 'Rechazados' },
+                        { id: 'ganador', label: 'Ganadores' }
+                        ].map(opt => (
+                        <TouchableOpacity
+                            key={opt.id || 'all-status'}
+                            onPress={() => setTicketFilters(s => ({ ...s, status: opt.id }))}
+                            style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: ticketFilters.status === opt.id ? 'rgba(96,165,250,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: ticketFilters.status === opt.id ? '#60a5fa' : 'rgba(255,255,255,0.08)' }}
+                        >
+                            <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>{opt.label}</Text>
+                        </TouchableOpacity>
+                        ))}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                        <TouchableOpacity onPress={loadTickets} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                        onPress={() => { setTicketFilters({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' }); setTimeout(loadTickets, 10); }}
+                        style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
+                        >
+                        <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                        <Text style={styles.section}>Resultados ({tickets.length})</Text>
+                        <TouchableOpacity onPress={exportTickets}>
+                        <Text style={{ color: palette.primary, fontWeight: 'bold' }}>Exportar CSV</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {ticketsLoading && <ActivityIndicator color={palette.primary} />}
+                    {!ticketsLoading && tickets.length === 0 && <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>No hay tickets.</Text>}
+                  </>
+                }
+              />
+            </View>
+        ) : activeSection === 'payments' ? (
+            <View style={{ flex: 1, paddingHorizontal: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Pagos Manuales</Text>
+              </View>
+              
+              <FlatList
+                data={payments}
+                keyExtractor={(item) => item.id || Math.random().toString()}
+                renderItem={({ item: p }) => {
+                  const buyer = p.user || {};
+                  const statusColor = p.status === 'approved' ? '#4ade80' : p.status === 'rejected' ? '#f87171' : '#fbbf24';
+                  return (
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>Ref: {p.reference || '—'}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
+                          <Ionicons name={p.status === 'approved' ? 'checkmark-circle' : p.status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
+                          <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '700' }}>{p.status}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifa ID: {p.raffleId} • Monto: ${Number(p.amount || 0).toFixed(2)}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>Creado: {p.createdAt ? new Date(p.createdAt).toLocaleString() : '—'}</Text>
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Comprador</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>{buyer.firstName || buyer.name || 'Usuario'} {buyer.lastName || ''}</Text>
+                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || '—'}</Text>
+                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.state || '—'}</Text>
+                      </View>
+                      {p.proof ? (
+                        <TouchableOpacity onPress={() => setProofViewer({ visible: true, uri: p.proof })}>
+                          <Text style={{ color: palette.primary, textDecorationLine: 'underline', marginVertical: 4 }}>Ver Comprobante</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                        <TouchableOpacity 
+                          onPress={() => processPayment(p.id, 'approve')}
+                          disabled={actingId === p.id}
+                          style={{ flex: 1, backgroundColor: '#4ade80', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
+                        >
+                          <Text style={{ color: '#064e3b', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Aprobar'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          onPress={() => processPayment(p.id, 'reject')}
+                          disabled={actingId === p.id}
+                          style={{ flex: 1, backgroundColor: '#f87171', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
+                        >
+                          <Text style={{ color: '#7f1d1d', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Rechazar'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                }}
+                ListHeaderComponent={
+                  <>
+                    <Text style={styles.muted}>Pagos reportados por usuarios pendientes de aprobación.</Text>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
+                        <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>Pendientes</Text>
+                        <Text style={{ color: '#fbbf24', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.pending}</Text>
+                        </View>
+                        <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>Aprobados</Text>
+                        <Text style={{ color: '#4ade80', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.approved}</Text>
+                        </View>
+                        <View style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rechazados</Text>
+                        <Text style={{ color: '#f87171', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.rejected}</Text>
+                        </View>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 }}>
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={paymentFilters.raffleId} onChangeText={(v) => setPaymentFilters(s => ({ ...s, raffleId: v }))} />
+                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={paymentFilters.reference} onChangeText={(v) => setPaymentFilters(s => ({ ...s, reference: v }))} />
+                    </View>
+
+                    <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8 }}>
+                        {[
+                        { id: '', label: 'Todos' },
+                        { id: 'pending', label: 'Pendientes' },
+                        { id: 'approved', label: 'Aprobados' },
+                        { id: 'rejected', label: 'Rechazados' }
+                        ].map(opt => (
+                        <TouchableOpacity
+                            key={opt.id || 'all'}
+                            onPress={() => setPaymentFilters(s => ({ ...s, status: opt.id }))}
+                            style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: paymentFilters.status === opt.id ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: paymentFilters.status === opt.id ? '#4ade80' : 'rgba(255,255,255,0.08)' }}
+                        >
+                            <Text style={{ color: paymentFilters.status === opt.id ? '#4ade80' : '#e2e8f0', fontWeight: '700' }}>{opt.label}</Text>
+                        </TouchableOpacity>
+                        ))}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+                        <TouchableOpacity onPress={loadManualPayments} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                        onPress={() => { setPaymentFilters({ raffleId: '', status: 'pending', reference: '' }); setTimeout(loadManualPayments, 10); }}
+                        style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
+                        >
+                        <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
+                        </TouchableOpacity>
+                    </View>
+                    
+                    {loadingPayments && <ActivityIndicator color={palette.primary} />}
+                    {!loadingPayments && payments.length === 0 && <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>No hay pagos pendientes.</Text>}
+                  </>
+                }
+              />
+            </View>
+        ) : (
         <ScrollView contentContainerStyle={styles.scroll}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <Text style={[styles.title, { marginBottom: 0 }]}>{user?.role === 'superadmin' ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
-            {techSupport && (
-              <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
-                <Ionicons name="help-circle-outline" size={28} color="#fff" />
-              </TouchableOpacity>
-            )}
-          </View>
           
           {/* Wallet pill removed per request */}
 
@@ -1157,6 +1608,60 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 numberOfLines={4}
               />
 
+              {/* SECCIÓN DE PERSONALIZACIÓN (ESTILO) */}
+              <Text style={[styles.section, { marginTop: 24, color: '#60a5fa' }]}>Personalización Visual</Text>
+              
+              <Text style={{ color: palette.secondary, fontWeight: 'bold', marginBottom: 4 }}>Banner Promocional</Text>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickBanner}>
+                <Ionicons name="image-outline" size={18} color={palette.primary} />
+                <Text style={[styles.secondaryText, { marginLeft: 8 }]}>{styleForm.bannerImage ? 'Cambiar Banner' : 'Subir Banner'}</Text>
+              </TouchableOpacity>
+              {styleForm.bannerImage ? (
+                <View style={{ position: 'relative', marginBottom: 12 }}>
+                  <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)' }} resizeMode="cover" />
+                  <TouchableOpacity 
+                    onPress={() => setStyleForm(s => ({ ...s, bannerImage: '' }))}
+                    style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 6 }}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#f87171" />
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <Text style={{ color: palette.secondary, fontWeight: 'bold', marginBottom: 4 }}>Galería de Imágenes</Text>
+              <Text style={[styles.muted, { marginBottom: 8, fontSize: 12 }]}>Máx {MAX_GALLERY_IMAGES} fotos adicionales.</Text>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickGalleryImage}>
+                <Ionicons name="images-outline" size={18} color={palette.primary} />
+                <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Agregar Foto</Text>
+              </TouchableOpacity>
+              
+              {(styleForm.gallery && styleForm.gallery.length > 0) && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {styleForm.gallery.map((img, index) => (
+                    <View key={index} style={{ marginRight: 8, position: 'relative' }}>
+                      <Image source={{ uri: img }} style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)' }} resizeMode="cover" />
+                      <TouchableOpacity 
+                        onPress={() => removeGalleryImage(index)}
+                        style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}
+                      >
+                        <Ionicons name="trash-outline" size={16} color="#f87171" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+
+              <Text style={{ color: palette.secondary, fontWeight: 'bold', marginBottom: 8 }}>Color del Tema</Text>
+              <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
+                {['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'].map(c => (
+                  <TouchableOpacity 
+                    key={c} 
+                    onPress={() => setStyleForm(s => ({ ...s, themeColor: c }))}
+                    style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: c, borderWidth: 2, borderColor: styleForm.themeColor === c ? '#fff' : 'transparent' }}
+                  />
+                ))}
+              </View>
+
               {/* SECCIÓN DE MÉTODOS DE PAGO INTEGRADA */}
               <Text style={[styles.section, { marginTop: 24, color: '#fbbf24' }]}>Métodos de Pago Aceptados</Text>
               <Text style={{ color: palette.muted, fontSize: 12, marginBottom: 12 }}>Selecciona qué métodos de pago estarán disponibles para esta rifa.</Text>
@@ -1223,14 +1728,23 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               </View>
 
               <Text style={[styles.section, { marginTop: 24 }]}>Rifas Existentes</Text>
-              {raffles.filter(r => r).map(r => (
+              {raffles.filter(r => r).map(r => {
+                const sold = r.soldTickets || 0;
+                const total = r.totalTickets || 100;
+                const percent = total > 0 ? (sold / total) * 100 : 0;
+                
+                return (
                 <View key={r.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>{r.title}</Text>
                       <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {r.id} • {r.status === 'closed' ? 'CERRADA' : 'ABIERTA'}</Text>
+                      <View style={{ marginTop: 6 }}>
+                        <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
+                        <Text style={{ color: '#cbd5e1', fontSize: 10 }}>Vendidos: {sold}/{total} ({percent.toFixed(1)}%)</Text>
+                      </View>
                     </View>
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <View style={{ flexDirection: 'row', gap: 8, marginLeft: 8 }}>
                       <TouchableOpacity onPress={() => {
                         setRaffleForm({
                           id: r.id,
@@ -1248,13 +1762,22 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                           minTickets: String(r.minTickets || '1'),
                           paymentMethods: r.paymentMethods || ['mobile_payment']
                         });
+                        // Pre-load style form as well
+                        setStyleForm({
+                          raffleId: r.id,
+                          bannerImage: r.style?.bannerImage || '',
+                          gallery: r.style?.gallery || [],
+                          themeColor: r.style?.themeColor || '#2563eb',
+                          whatsapp: r.style?.whatsapp || '',
+                          instagram: r.style?.instagram || ''
+                        });
                       }} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8 }}>
                         <Ionicons name="create-outline" size={20} color="#fff" />
                       </TouchableOpacity>
                       
                       {r.status !== 'closed' && (
-                        <TouchableOpacity onPress={() => Alert.alert('Cerrar Rifa', '¿Cerrar esta rifa y seleccionar ganador?', [{ text: 'Cancelar' }, { text: 'Cerrar', onPress: () => closeRaffle(r.id) }])} style={{ padding: 8, backgroundColor: 'rgba(251, 191, 36, 0.2)', borderRadius: 8 }}>
-                          <Ionicons name="lock-closed-outline" size={20} color="#fbbf24" />
+                        <TouchableOpacity onPress={() => openWinnerModal(r.id)} style={{ padding: 8, backgroundColor: 'rgba(251, 191, 36, 0.2)', borderRadius: 8 }}>
+                          <Ionicons name="trophy-outline" size={20} color="#fbbf24" />
                         </TouchableOpacity>
                       )}
 
@@ -1266,7 +1789,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                     </View>
                   </View>
                 </View>
-              ))}
+              )})}
             </View>
           )}
 
@@ -1314,164 +1837,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
             </View>
           )}
 
-          {activeSection === 'sa_users' && (
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => {
-                    if (viewUser) setViewUser(null);
-                    else setActiveSection(null);
-                  }}>
-                    <Ionicons name="arrow-back" size={24} color="#fff" />
-                  </TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>
-                    {viewUser ? 'Hoja de Vida' : 'Gestión de Usuarios'}
-                  </Text>
-              </View>
-              
-              {viewUser ? (
-                <View>
-                  {/* VISTA DE DETALLE (HOJA DE VIDA) */}
-                  <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, borderRadius: 12, marginBottom: 16 }}>
-                      <View style={{ alignItems: 'center', marginBottom: 16 }}>
-                          <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
-                              <Text style={{ fontSize: 32, fontWeight: 'bold', color: '#fff' }}>
-                                  {(viewUser.name || 'U').charAt(0).toUpperCase()}
-                              </Text>
-                          </View>
-                          <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#fff' }}>{viewUser.name}</Text>
-                          <Text style={{ color: palette.muted }}>{viewUser.email}</Text>
-                          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                              <View style={{ backgroundColor: viewUser.role === 'admin' ? '#60a5fa' : '#94a3b8', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#000' }}>{viewUser.role.toUpperCase()}</Text>
-                              </View>
-                              <View style={{ backgroundColor: viewUser.active ? '#4ade80' : '#f87171', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#000' }}>{viewUser.active ? 'ACTIVO' : 'INACTIVO'}</Text>
-                              </View>
-                          </View>
-                      </View>
 
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.1)', paddingTop: 16 }}>
-                          <TouchableOpacity 
-                              onPress={() => {
-                                const newStatus = !viewUser.active;
-                                updateUserStatus(viewUser.id, { active: newStatus });
-                                setViewUser(prev => ({ ...prev, active: newStatus }));
-                              }}
-                              style={{ alignItems: 'center' }}
-                          >
-                              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: viewUser.active ? 'rgba(248, 113, 113, 0.2)' : 'rgba(74, 222, 128, 0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
-                                  <Ionicons name={viewUser.active ? "ban" : "checkmark"} size={20} color={viewUser.active ? "#f87171" : "#4ade80"} />
-                              </View>
-                              <Text style={{ color: '#fff', fontSize: 12 }}>{viewUser.active ? 'Bloquear' : 'Activar'}</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity 
-                              onPress={() => {
-                                const newStatus = !viewUser.verified;
-                                toggleUserVerification(viewUser.id, viewUser.verified);
-                                setViewUser(prev => ({ ...prev, verified: newStatus }));
-                              }}
-                              style={{ alignItems: 'center' }}
-                          >
-                              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: viewUser.verified ? 'rgba(251, 191, 36, 0.2)' : 'rgba(34, 211, 238, 0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 4 }}>
-                                  <Ionicons name={viewUser.verified ? "close" : "checkmark-done"} size={20} color={viewUser.verified ? "#fbbf24" : "#22d3ee"} />
-                              </View>
-                              <Text style={{ color: '#fff', fontSize: 12 }}>{viewUser.verified ? 'Revocar' : 'Verificar'}</Text>
-                          </TouchableOpacity>
-                      </View>
-                  </View>
-
-                  <Text style={styles.section}>Historial Reciente</Text>
-                  <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 16 }}>
-                      <Text style={{ color: palette.muted, textAlign: 'center', fontStyle: 'italic' }}>
-                          No hay transacciones recientes registradas para este usuario.
-                      </Text>
-                  </View>
-                </View>
-              ) : (
-                <>
-                  <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                    <Text style={styles.section}>Crear Nuevo Usuario</Text>
-                    <TextInput style={styles.input} placeholder="Email" value={createForm.email} onChangeText={(v) => setCreateForm(s => ({ ...s, email: v }))} autoCapitalize="none" />
-                    <TextInput style={styles.input} placeholder="Contraseña" value={createForm.password} onChangeText={(v) => setCreateForm(s => ({ ...s, password: v }))} secureTextEntry />
-                    <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <TextInput style={[styles.input, { flex: 1 }]} placeholder="Nombre" value={createForm.firstName} onChangeText={(v) => setCreateForm(s => ({ ...s, firstName: v }))} />
-                      <TextInput style={[styles.input, { flex: 1 }]} placeholder="Apellido" value={createForm.lastName} onChangeText={(v) => setCreateForm(s => ({ ...s, lastName: v }))} />
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                      <Text style={{ color: '#fff' }}>Rol: {createForm.role}</Text>
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <TouchableOpacity onPress={() => setCreateForm(s => ({ ...s, role: 'user' }))} style={{ padding: 8, backgroundColor: createForm.role === 'user' ? palette.primary : '#334155', borderRadius: 8 }}><Text style={{ color: '#fff' }}>User</Text></TouchableOpacity>
-                        <TouchableOpacity onPress={() => setCreateForm(s => ({ ...s, role: 'admin' }))} style={{ padding: 8, backgroundColor: createForm.role === 'admin' ? palette.primary : '#334155', borderRadius: 8 }}><Text style={{ color: '#fff' }}>Admin</Text></TouchableOpacity>
-                      </View>
-                    </View>
-                    <FilledButton title={creating ? 'Creando...' : 'Crear Usuario'} onPress={createAccount} loading={creating} disabled={creating} icon={<Ionicons name="person-add-outline" size={18} color="#fff" />} />
-                  </View>
-
-                  <Text style={styles.section}>Lista de Usuarios ({filteredUsers.length})</Text>
-                  <TextInput 
-                    style={styles.input} 
-                    placeholder="Buscar por nombre o email..." 
-                    value={userSearch} 
-                    onChangeText={filterUsers} 
-                  />
-
-                  <Text style={[styles.section, { marginTop: 16, color: '#60a5fa' }]}>Administradores y Staff</Text>
-                  {filteredUsers.filter(u => u && (u.role === 'admin' || u.role === 'superadmin')).map(u => (
-                    <TouchableOpacity 
-                      key={u.id || Math.random()} 
-                      onPress={() => setViewUser(u)}
-                      style={{ backgroundColor: 'rgba(96, 165, 250, 0.1)', padding: 12, borderRadius: 12, marginBottom: 8, borderWidth: 1, borderColor: 'rgba(96, 165, 250, 0.3)' }}
-                    >
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <View>
-                          <Text style={{ color: '#fff', fontWeight: 'bold' }}>{u.name || 'Sin nombre'}</Text>
-                          <Text style={{ color: palette.muted, fontSize: 12 }}>{u.email}</Text>
-                          <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                            <View style={{ backgroundColor: u.role === 'superadmin' ? '#c084fc' : '#60a5fa', paddingHorizontal: 6, borderRadius: 4 }}>
-                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{(u.role || 'user').toUpperCase()}</Text>
-                            </View>
-                            <View style={{ backgroundColor: u.active ? '#4ade80' : '#f87171', paddingHorizontal: 6, borderRadius: 4 }}>
-                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{u.active ? 'ACTIVO' : 'INACTIVO'}</Text>
-                            </View>
-                          </View>
-                        </View>
-                        <Ionicons name="chevron-forward" size={20} color={palette.muted} />
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-
-                  <Text style={[styles.section, { marginTop: 16, color: '#4ade80' }]}>Usuarios Registrados</Text>
-                  {filteredUsers.filter(u => u && u.role !== 'admin' && u.role !== 'superadmin').map(u => (
-                    <TouchableOpacity 
-                      key={u.id || Math.random()} 
-                      onPress={() => setViewUser(u)}
-                      style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}
-                    >
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <View>
-                          <Text style={{ color: '#fff', fontWeight: 'bold' }}>{u.name || 'Sin nombre'}</Text>
-                          <Text style={{ color: palette.muted, fontSize: 12 }}>{u.email}</Text>
-                          <View style={{ flexDirection: 'row', gap: 6, marginTop: 4 }}>
-                            <View style={{ backgroundColor: '#94a3b8', paddingHorizontal: 6, borderRadius: 4 }}>
-                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>USER</Text>
-                            </View>
-                            <View style={{ backgroundColor: u.active ? '#4ade80' : '#f87171', paddingHorizontal: 6, borderRadius: 4 }}>
-                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{u.active ? 'ACTIVO' : 'INACTIVO'}</Text>
-                            </View>
-                            <View style={{ backgroundColor: u.verified ? '#22d3ee' : '#fbbf24', paddingHorizontal: 6, borderRadius: 4 }}>
-                              <Text style={{ color: '#000', fontSize: 10, fontWeight: 'bold' }}>{u.verified ? 'VERIFICADO' : 'NO VERIF.'}</Text>
-                            </View>
-                          </View>
-                        </View>
-                        <Ionicons name="chevron-forward" size={20} color={palette.muted} />
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </>
-              )}
-            </View>
-          )}
 
 
 
@@ -1655,365 +2021,13 @@ export default function AdminScreen({ api, user, modulesConfig }) {
             </View>
           )}
 
-          {activeSection === 'progress' && (
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Progreso de Rifas</Text>
-              </View>
-              {raffles.filter(r => r).map(r => {
-                // Mock calculation if backend doesn't send sold count yet
-                const sold = r.soldTickets || 0; 
-                const total = r.totalTickets || 100;
-                const percent = (sold / total) * 100;
-                const revenue = sold * r.price;
-                
-                return (
-                  <View key={r.id} style={{ marginBottom: 16, backgroundColor: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 12 }}>
-                    <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{r.title}</Text>
-                    <Text style={{ color: palette.muted, fontSize: 12, marginBottom: 8 }}>ID: {r.id} | Precio: ${r.price}</Text>
-                    
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <Text style={{ color: '#cbd5e1' }}>Vendidos: {sold}/{total}</Text>
-                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{percent.toFixed(1)}%</Text>
-                    </View>
-                    <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
-                    
-                    <Text style={{ color: '#fff', marginTop: 4 }}>Recaudado: <Text style={{ color: '#4ade80', fontWeight: 'bold' }}>${revenue.toFixed(2)}</Text></Text>
-                  </View>
-                );
-              })}
-            </View>
-          )}
 
-          {activeSection === 'payments' && (
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Pagos Manuales</Text>
-              </View>
-              <Text style={styles.muted}>Pagos reportados por usuarios pendientes de aprobación.</Text>
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
-                <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>Pendientes</Text>
-                  <Text style={{ color: '#fbbf24', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.pending}</Text>
-                </View>
-                <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>Aprobados</Text>
-                  <Text style={{ color: '#4ade80', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.approved}</Text>
-                </View>
-                <View style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rechazados</Text>
-                  <Text style={{ color: '#f87171', fontWeight: '800', fontSize: 18 }}>{paymentKPIs.rejected}</Text>
-                </View>
-              </View>
 
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 }}>
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={paymentFilters.raffleId} onChangeText={(v) => setPaymentFilters(s => ({ ...s, raffleId: v }))} />
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={paymentFilters.reference} onChangeText={(v) => setPaymentFilters(s => ({ ...s, reference: v }))} />
-              </View>
 
-              <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8 }}>
-                {[
-                  { id: '', label: 'Todos' },
-                  { id: 'pending', label: 'Pendientes' },
-                  { id: 'approved', label: 'Aprobados' },
-                  { id: 'rejected', label: 'Rechazados' }
-                ].map(opt => (
-                  <TouchableOpacity
-                    key={opt.id || 'all'}
-                    onPress={() => setPaymentFilters(s => ({ ...s, status: opt.id }))}
-                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: paymentFilters.status === opt.id ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: paymentFilters.status === opt.id ? '#4ade80' : 'rgba(255,255,255,0.08)' }}
-                  >
-                    <Text style={{ color: paymentFilters.status === opt.id ? '#4ade80' : '#e2e8f0', fontWeight: '700' }}>{opt.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
 
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                <TouchableOpacity onPress={loadManualPayments} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => { setPaymentFilters({ raffleId: '', status: 'pending', reference: '' }); setTimeout(loadManualPayments, 10); }}
-                  style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
-                >
-                  <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
-                </TouchableOpacity>
-              </View>
-              
-              {loadingPayments ? <ActivityIndicator color={palette.primary} /> : (
-                payments.length === 0 ? <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>No hay pagos pendientes.</Text> :
-                payments.filter(p => p).map(p => {
-                  const buyer = p.user || {};
-                  const statusColor = p.status === 'approved' ? '#4ade80' : p.status === 'rejected' ? '#f87171' : '#fbbf24';
-                  return (
-                    <View key={p.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>Ref: {p.reference || '—'}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
-                          <Ionicons name={p.status === 'approved' ? 'checkmark-circle' : p.status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
-                          <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '700' }}>{p.status}</Text>
-                        </View>
-                      </View>
-                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifa ID: {p.raffleId} • Monto: ${Number(p.amount || 0).toFixed(2)}</Text>
-                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>Creado: {p.createdAt ? new Date(p.createdAt).toLocaleString() : '—'}</Text>
-                      <View style={{ marginTop: 8 }}>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Comprador</Text>
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>{buyer.firstName || buyer.name || 'Usuario'} {buyer.lastName || ''}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || '—'}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.state || '—'}</Text>
-                      </View>
-                      {p.proof ? (
-                        <TouchableOpacity onPress={() => setProofViewer({ visible: true, uri: p.proof })}>
-                          <Text style={{ color: palette.primary, textDecorationLine: 'underline', marginVertical: 4 }}>Ver Comprobante</Text>
-                        </TouchableOpacity>
-                      ) : null}
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                        <TouchableOpacity 
-                          onPress={() => processPayment(p.id, 'approve')}
-                          disabled={actingId === p.id}
-                          style={{ flex: 1, backgroundColor: '#4ade80', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
-                        >
-                          <Text style={{ color: '#064e3b', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Aprobar'}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          onPress={() => processPayment(p.id, 'reject')}
-                          disabled={actingId === p.id}
-                          style={{ flex: 1, backgroundColor: '#f87171', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
-                        >
-                          <Text style={{ color: '#7f1d1d', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Rechazar'}</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  );
-                })
-              )}
-            </View>
-          )}
 
-          {activeSection === 'style' && (
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Personalizar Rifa</Text>
-              </View>
-              
-              <Text style={styles.section}>Seleccionar Rifa</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
-                {raffles.filter(r => r).map(r => (
-                  <TouchableOpacity 
-                    key={r.id} 
-                    onPress={() => {
-                      setSelectedRaffle(r);
-                      setStyleForm({
-                        raffleId: r.id,
-                        bannerImage: r.style?.bannerImage || '',
-                        gallery: r.style?.gallery || [],
-                        themeColor: r.style?.themeColor || '#2563eb',
-                        whatsapp: r.style?.whatsapp || '',
-                        instagram: r.style?.instagram || ''
-                      });
-                    }}
-                    style={{ 
-                      padding: 10, 
-                      backgroundColor: selectedRaffle?.id === r.id ? palette.primary : 'rgba(255,255,255,0.1)', 
-                      borderRadius: 8, 
-                      marginRight: 8 
-                    }}
-                  >
-                    <Text style={{ color: '#fff' }}>{r.title}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
 
-              {selectedRaffle && (
-                <>
-                  <Text style={styles.section}>Banner Promocional</Text>
-                  <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickBanner}>
-                    <Ionicons name="image-outline" size={18} color={palette.primary} />
-                    <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Cambiar Banner</Text>
-                  </TouchableOpacity>
-                  {styleForm.bannerImage ? (
-                    <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', height: 120, borderRadius: 8, marginBottom: 12, backgroundColor: 'rgba(255,255,255,0.05)' }} resizeMode="contain" />
-                  ) : null}
-
-                  <Text style={styles.section}>Galería de Imágenes</Text>
-                  <Text style={[styles.muted, { marginBottom: 4 }]}>Formato recomendado 16:9, máx {MAX_GALLERY_IMAGES} fotos.</Text>
-                  <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickGalleryImage}>
-                    <Ionicons name="images-outline" size={18} color={palette.primary} />
-                    <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Agregar Foto a Galería</Text>
-                  </TouchableOpacity>
-                  
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
-                    {(styleForm.gallery || []).map((img, index) => (
-                      <View key={index} style={{ marginRight: 8, position: 'relative' }}>
-                        <Image source={{ uri: img }} style={{ width: 100, height: 100, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)' }} resizeMode="contain" />
-                        <TouchableOpacity 
-                          onPress={() => removeGalleryImage(index)}
-                          style={{ position: 'absolute', top: 4, right: 4, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 4 }}
-                        >
-                          <Ionicons name="trash-outline" size={16} color="#f87171" />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </ScrollView>
-
-                  <Text style={styles.section}>Color del Tema</Text>
-                  <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
-                    {['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'].map(c => (
-                      <TouchableOpacity 
-                        key={c} 
-                        onPress={() => setStyleForm(s => ({ ...s, themeColor: c }))}
-                        style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: 2, borderColor: styleForm.themeColor === c ? '#fff' : 'transparent' }}
-                      />
-                    ))}
-                  </View>
-
-                  <FilledButton title={savingStyle ? 'Guardando...' : 'Guardar Estilo'} onPress={saveStyle} loading={savingStyle} disabled={savingStyle} icon={<Ionicons name="color-palette-outline" size={18} color="#fff" />} />
-                </>
-              )}
-            </View>
-          )}
-
-          {activeSection === 'tickets' && (
-            <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Gestión de Tickets</Text>
-              </View>
-
-              {/* VERIFICADOR RÁPIDO */}
-              <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: 16, borderRadius: 16, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
-                <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>Verificador Rápido</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                  <TextInput 
-                    style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 18, fontWeight: 'bold', textAlign: 'center' }]} 
-                    placeholder="# Ticket" 
-                    value={verifierInput} 
-                    onChangeText={setVerifierInput} 
-                    keyboardType="numeric"
-                  />
-                  <TouchableOpacity 
-                    onPress={() => {
-                      if (!verifierInput) return;
-                      const found = tickets.find(t => String(t.number) === verifierInput || String(t.serialNumber) === verifierInput);
-                      if (found) {
-                        setVerifierResult({ status: 'found', ticket: found });
-                      } else {
-                        setVerifierResult({ status: 'not_found' });
-                      }
-                    }}
-                    style={{ backgroundColor: palette.primary, paddingHorizontal: 20, justifyContent: 'center', borderRadius: 12 }}
-                  >
-                    <Ionicons name="scan-outline" size={24} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-                
-                {verifierResult && (
-                  <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: verifierResult.status === 'found' ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: verifierResult.status === 'found' ? '#4ade80' : '#f87171' }}>
-                    {verifierResult.status === 'found' ? (
-                      <>
-                        <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡TICKET VÁLIDO!</Text>
-                        <Text style={{ color: '#fff', textAlign: 'center', marginTop: 4 }}>Dueño: {verifierResult.ticket.buyer?.firstName || verifierResult.ticket.user?.name || 'Desconocido'}</Text>
-                        <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Estado: {(verifierResult.ticket.status || 'unknown').toUpperCase()}</Text>
-                      </>
-                    ) : (
-                      <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>NO ENCONTRADO</Text>
-                    )}
-                  </View>
-                )}
-              </View>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={ticketFilters.raffleId} onChangeText={(v) => setTicketFilters(s => ({ ...s, raffleId: v }))} keyboardType="numeric" />
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={ticketFilters.reference} onChangeText={(v) => setTicketFilters(s => ({ ...s, reference: v }))} />
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Teléfono" value={ticketFilters.phone} onChangeText={(v) => setTicketFilters(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Cédula" value={ticketFilters.cedula} onChangeText={(v) => setTicketFilters(s => ({ ...s, cedula: v }))} keyboardType="numeric" />
-                <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Email" value={ticketFilters.email} onChangeText={(v) => setTicketFilters(s => ({ ...s, email: v }))} autoCapitalize="none" />
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                {[
-                  { id: '', label: 'Todos' },
-                  { id: 'approved', label: 'Aprobados' },
-                  { id: 'pending', label: 'Pendientes' },
-                  { id: 'rejected', label: 'Rechazados' },
-                  { id: 'ganador', label: 'Ganadores' }
-                ].map(opt => (
-                  <TouchableOpacity
-                    key={opt.id || 'all-status'}
-                    onPress={() => setTicketFilters(s => ({ ...s, status: opt.id }))}
-                    style={{ paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10, backgroundColor: ticketFilters.status === opt.id ? 'rgba(96,165,250,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: ticketFilters.status === opt.id ? '#60a5fa' : 'rgba(255,255,255,0.08)' }}
-                  >
-                    <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>{opt.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                <TouchableOpacity onPress={loadTickets} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => { setTicketFilters({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' }); setTimeout(loadTickets, 10); }}
-                  style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
-                >
-                  <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <Text style={styles.section}>Resultados ({tickets.length})</Text>
-                <TouchableOpacity onPress={exportTickets}>
-                  <Text style={{ color: palette.primary, fontWeight: 'bold' }}>Exportar CSV</Text>
-                </TouchableOpacity>
-              </View>
-
-              {ticketsLoading ? <ActivityIndicator color={palette.primary} /> : (
-                <ScrollView style={{ maxHeight: 420 }}>
-                  {tickets.filter(t => t).map(t => {
-                    const buyer = t.buyer || {};
-                    const raffleDigits = raffles.find(r => r.id === t.raffleId)?.digits;
-                    const statusColor = t.status === 'approved' || t.status === 'aprobado' ? '#4ade80' : t.status === 'ganador' ? '#fbbf24' : t.status === 'rejected' ? '#f87171' : '#fbbf24';
-                    return (
-                      <View key={t.id} style={{ marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? t.serialNumber ?? '0', raffleDigits)}</Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: statusColor }}>
-                            <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time'} size={14} color={statusColor} />
-                            <Text style={{ color: statusColor, fontWeight: '700', marginLeft: 6 }}>{t.status}</Text>
-                          </View>
-                        </View>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12, marginTop: 2 }}>Rifa: {t.raffleTitle || t.raffleId}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Referencia: {t.reference || '—'}</Text>
-                        <View style={{ marginTop: 6 }}>
-                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>Comprador</Text>
-                          <Text style={{ color: '#fff', fontWeight: '700' }}>{buyer.firstName || buyer.name || t.user?.name || 'Usuario'} {buyer.lastName || ''}</Text>
-                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || t.user?.email || '—'}</Text>
-                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.phone || buyer.cedula || '—'}</Text>
-                        </View>
-                        <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Fecha: {t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</Text>
-                        {t.status === 'ganador' && winnerInfo?.ticket === (t.number || t.ticketNumber) ? (
-                          <Text style={{ color: '#fbbf24', fontWeight: '700', marginTop: 4 }}>Ganador anunciado</Text>
-                        ) : null}
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              )}
-              {winnerInfo ? (
-                <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: 'rgba(74,222,128,0.08)', borderWidth: 1, borderColor: 'rgba(74,222,128,0.3)' }}>
-                  <Text style={{ color: '#4ade80', fontWeight: '800', fontSize: 16 }}>Ganador de la rifa seleccionada</Text>
-                  <Text style={{ color: '#e2e8f0', marginTop: 4 }}>Ticket: {winnerInfo.ticket}</Text>
-                  <Text style={{ color: '#e2e8f0' }}>Nombre: {winnerInfo.name}</Text>
-                  <Text style={{ color: '#cbd5e1' }}>Email: {winnerInfo.email || '—'}</Text>
-                  <Text style={{ color: '#cbd5e1' }}>Teléfono: {winnerInfo.phone || '—'}</Text>
-                  <Text style={{ color: '#94a3b8', marginTop: 4 }}>Anunciado: {winnerInfo.announcedAt || '—'}</Text>
-                </View>
-              ) : null}
-            </View>
-          )}
 
           <Modal visible={proofViewer.visible} transparent animationType="fade" onRequestClose={closeProofViewer}>
             <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
@@ -2407,6 +2421,62 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                   style={{ flex: 1, padding: 16, borderRadius: 12, backgroundColor: '#fbbf24', alignItems: 'center' }}
                 >
                   <Text style={{ color: '#0b1224', fontWeight: '800' }}>SÍ, ES CORRECTO</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={winnerModalVisible}
+          onRequestClose={() => setWinnerModalVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Declarar Ganador</Text>
+              <Text style={{ color: '#94a3b8', marginBottom: 20 }}>Ingresa el número ganador de la lotería o sorteo.</Text>
+              
+              <TextInput
+                style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 16, borderRadius: 12, fontSize: 24, textAlign: 'center', fontWeight: 'bold', marginBottom: 20, borderWidth: 1, borderColor: '#fbbf24' }}
+                placeholder="0000"
+                placeholderTextColor="#475569"
+                keyboardType="numeric"
+                value={winningNumberInput}
+                onChangeText={setWinningNumberInput}
+                maxLength={6}
+              />
+
+              <TouchableOpacity onPress={pickWinnerPhoto} style={{ marginBottom: 20, alignItems: 'center', padding: 12, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, borderStyle: 'dashed', borderWidth: 1, borderColor: '#94a3b8' }}>
+                {winnerPhoto ? (
+                  <Image source={{ uri: winnerPhoto.uri }} style={{ width: 100, height: 100, borderRadius: 8 }} />
+                ) : (
+                  <>
+                    <Ionicons name="camera-outline" size={24} color="#94a3b8" />
+                    <Text style={{ color: '#94a3b8', marginTop: 8 }}>Subir Foto del Ganador (Opcional)</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity 
+                  onPress={() => setWinnerModalVisible(false)}
+                  style={{ flex: 1, padding: 16, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>Cancelar</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  onPress={declareWinner}
+                  disabled={declaringWinner}
+                  style={{ flex: 1, padding: 16, borderRadius: 12, backgroundColor: '#fbbf24', alignItems: 'center', opacity: declaringWinner ? 0.7 : 1 }}
+                >
+                  {declaringWinner ? (
+                    <ActivityIndicator color="#000" />
+                  ) : (
+                    <Text style={{ color: '#0b1224', fontWeight: '800' }}>CONFIRMAR</Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>

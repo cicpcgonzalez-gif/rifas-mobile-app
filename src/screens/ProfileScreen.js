@@ -14,6 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
 import { palette } from '../theme';
 import { styles } from '../styles';
@@ -48,6 +49,13 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
   }, [profile, tickets]);
 
   const [errorMsg, setErrorMsg] = useState('');
+
+  const copyReferral = async () => {
+    if (profile?.referralCode) {
+      await Clipboard.setStringAsync(profile.referralCode);
+      Alert.alert('Copiado', 'Código de referido copiado al portapapeles.');
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -225,13 +233,38 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
               
               <Text style={[styles.itemTitle, { fontSize: 24, marginTop: 12 }]}>{profile.name || 'Usuario'}</Text>
               
-              {/* STARS RATING */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, backgroundColor: 'rgba(251, 191, 36, 0.1)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12 }}>
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <Ionicons key={star} name="star" size={14} color="#fbbf24" />
-                ))}
-                <Text style={{ color: '#fbbf24', marginLeft: 6, fontWeight: 'bold', fontSize: 12 }}>5.0 (Excelencia)</Text>
+              {/* STATS ROW */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 20, paddingHorizontal: 10 }}>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{tickets.length}</Text>
+                  <Text style={{ color: palette.subtext, fontSize: 12 }}>Tickets</Text>
+                </View>
+                <View style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.1)' }} />
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{profile.referrals?.length || 0}</Text>
+                  <Text style={{ color: palette.subtext, fontSize: 12 }}>Referidos</Text>
+                </View>
               </View>
+
+              {/* ACHIEVEMENTS */}
+              {achievements.length > 0 && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 20 }}>
+                  {achievements.map(a => (
+                    <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+                      <Ionicons name={a.icon} size={14} color="#fbbf24" />
+                      <Text style={{ color: '#e2e8f0', fontSize: 12, marginLeft: 6, fontWeight: '600' }}>{a.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* REFERRAL CODE */}
+              {profile.referralCode && (
+                <TouchableOpacity onPress={copyReferral} style={{ marginTop: 20, backgroundColor: 'rgba(37, 99, 235, 0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderStyle: 'dashed', borderWidth: 1, borderColor: '#3b82f6', flexDirection: 'row', alignItems: 'center' }}>
+                  <Ionicons name="copy-outline" size={16} color="#3b82f6" />
+                  <Text style={{ color: '#3b82f6', marginLeft: 8, fontWeight: 'bold' }}>Código: {profile.referralCode}</Text>
+                </TouchableOpacity>
+              )}
 
               {profile.verified && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
