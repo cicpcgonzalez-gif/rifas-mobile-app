@@ -252,11 +252,14 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
           <TextInput style={styles.input} value={quantity} onChangeText={setQuantity} keyboardType="numeric" placeholder="Cantidad (Aleatoria)" />
 
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <OutlineButton title={buying ? 'Procesando...' : 'Comprar con Saldo'} onPress={purchase} disabled={buying} icon={<Ionicons name="wallet-outline" size={18} color={themeColor} />} />
-          </View>
+          {(!style.paymentMethods || style.paymentMethods.includes('wallet')) && (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <OutlineButton title={buying ? 'Procesando...' : 'Comprar con Saldo'} onPress={purchase} disabled={buying} icon={<Ionicons name="wallet-outline" size={18} color={themeColor} />} />
+            </View>
+          )}
         </View>
 
+        {(!style.paymentMethods || style.paymentMethods.includes('mobile_payment')) && (
         <View style={styles.card}>
           <View style={styles.sectionRow}>
             <Text style={[styles.section, { color: themeColor }]}>Pago móvil guiado</Text>
@@ -331,6 +334,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             </>
           )}
         </View>
+        )}
 
         {ticket && (
           <View style={[styles.card, styles.glassCard, { borderColor: palette.primary, borderWidth: 1 }]}>
