@@ -29,22 +29,13 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "VIBRATE",
-        "INTERNET",
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE",
         "VIBRATE"
-      ],
-      "runtimeVersion": "1.0.0"
+      ]
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.megarifas.app",
-      "buildNumber": "1.0.1",
-      "runtimeVersion": {
-        "policy": "appVersion"
-      }
+      "buildNumber": "1.0.1"
     },
     "extra": {
       "eas": {
