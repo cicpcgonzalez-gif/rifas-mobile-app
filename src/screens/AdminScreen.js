@@ -22,7 +22,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { useFocusEffect, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import { palette } from '../theme';
 import { FilledButton, OutlineButton } from '../components/UI';
 
@@ -48,12 +48,19 @@ const normalizeImage = async (asset, { maxWidth = 1024, compress = 0.7 } = {}) =
 
 export default function AdminScreen({ api, user, modulesConfig }) {
   const route = useRoute();
+  const navigation = useNavigation();
+  const lastEditHandledRef = useRef(null);
   const [activeSection, setActiveSection] = useState(null);
 
   // Handle navigation params for editing
   useFocusEffect(
     useCallback(() => {
-      if (route.params?.action === 'editRaffle' && route.params?.raffleData) {
+      const action = route.params?.action;
+      const raffleData = route.params?.raffleData;
+      const raffleId = raffleData?.id || null;
+
+      if (action === 'editRaffle' && raffleData && raffleId && lastEditHandledRef.current !== raffleId) {
+        lastEditHandledRef.current = raffleId;
         const r = route.params.raffleData;
         setActiveSection('raffles');
         setRaffleForm({
@@ -70,11 +77,15 @@ export default function AdminScreen({ api, user, modulesConfig }) {
           terms: r.terms || '',
           securityCode: r.securityCode || ''
         });
-        // Clear params to avoid re-triggering
-        route.params.action = null;
-        route.params.raffleData = null;
+
+        // Clear params to avoid re-triggering (route.params es read-only)
+        try {
+          navigation.setParams({ action: undefined, raffleData: undefined });
+        } catch (_err) {
+          // Si el navigator no soporta setParams aquí, al menos no crashear.
+        }
       }
-    }, [route.params])
+    }, [route.params?.action, route.params?.raffleData, navigation])
   );
 
   // Superadmin State

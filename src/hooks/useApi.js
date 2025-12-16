@@ -16,12 +16,20 @@ export function useApi(accessToken, refreshToken, persistTokens) {
       const hasBody = options.body !== undefined;
       if (hasBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
 
-      const res = await fetch(`${API_URL}${path}`, { ...options, headers });
-      let data = null;
+      let res;
+      try {
+        res = await fetch(`${API_URL}${path}`, { ...options, headers });
+      } catch (_err) {
+        return {
+          res: { ok: false, status: 0, networkError: true },
+          data: { error: 'No se pudo conectar. Verifica tu internet o el servidor.' }
+        };
+      }
+      let data = {};
       try {
         data = await res.json();
       } catch (e) {
-        data = null;
+        data = {};
       }
 
       // Attempt silent refresh on 401 once
@@ -32,8 +40,13 @@ export function useApi(accessToken, refreshToken, persistTokens) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refreshToken })
           });
-          const refreshData = await refreshRes.json();
-          if (refreshRes.ok && refreshData.accessToken) {
+          let refreshData = {};
+          try {
+            refreshData = await refreshRes.json();
+          } catch (_e) {
+            refreshData = {};
+          }
+          if (refreshRes.ok && refreshData?.accessToken) {
             await persistTokens(refreshData.accessToken, refreshData.refreshToken || refreshToken, refreshData.user);
             return call(path, options);
           }
