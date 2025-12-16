@@ -20,6 +20,7 @@ import LegalScreen from './screens/LegalScreen';
 import { useApi } from './hooks/useApi';
 import { ToastProvider } from './components/UI';
 import ConfettiOverlay from './components/ConfettiOverlay';
+import AppErrorBoundary from './components/AppErrorBoundary';
 
 const Stack = createNativeStackNavigator();
 
@@ -195,83 +196,81 @@ function MainContent() {
     );
 
   return (
-    <>
-      <NavigationContainer>
-        <StatusBar style="auto" />
-      <Stack.Navigator
-        screenOptions={{
-          headerStyle: { backgroundColor: palette.background },
-          headerTitleStyle: { color: palette.text, fontWeight: '800' },
-          headerTintColor: palette.primary
-        }}
-      >
-        {accessToken ? (
-          <>
-          <Stack.Screen
-            name="Main"
-            options={{
-              headerShown: false
+    <AppErrorBoundary onLogout={accessToken ? logout : undefined}>
+      <>
+        <NavigationContainer>
+          <StatusBar style="auto" />
+          <Stack.Navigator
+            screenOptions={{
+              headerStyle: { backgroundColor: palette.background },
+              headerTitleStyle: { color: palette.text, fontWeight: '800' },
+              headerTintColor: palette.primary
             }}
           >
-            {() => (
-              <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }}>
-                <View style={{ flex: 1 }}>
-                  <TabsNavigator
-                    api={api}
-                    user={user}
-                    onUserUpdate={updateUserProfile}
-                    modulesConfig={modulesConfig}
-                    pushToken={pushToken}
-                    setPushToken={setPushToken}
-                    onLogout={logout}
-                  />
-                  {/* WhatsApp Floating Button */}
-                  <TouchableOpacity
-                    onPress={() => Linking.openURL('https://wa.me/584227930168')}
-                    style={{
-                      position: 'absolute',
-                      bottom: 80,
-                      right: 20,
-                      backgroundColor: '#25D366',
-                      width: 60,
-                      height: 60,
-                      borderRadius: 30,
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      elevation: 5,
-                      shadowColor: '#000',
-                      shadowOffset: { width: 0, height: 2 },
-                      shadowOpacity: 0.3,
-                      shadowRadius: 3,
-                      zIndex: 1000
-                    }}
-                  >
-                    <Ionicons name="logo-whatsapp" size={32} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-              </SafeAreaView>
+            {accessToken ? (
+              <>
+                <Stack.Screen
+                  name="Main"
+                  options={{
+                    headerShown: false
+                  }}
+                >
+                  {() => (
+                    <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }}>
+                      <View style={{ flex: 1 }}>
+                        <TabsNavigator
+                          api={api}
+                          user={user}
+                          onUserUpdate={updateUserProfile}
+                          modulesConfig={modulesConfig}
+                          pushToken={pushToken}
+                          setPushToken={setPushToken}
+                          onLogout={logout}
+                        />
+                        {/* WhatsApp Floating Button */}
+                        <TouchableOpacity
+                          onPress={() => Linking.openURL('https://wa.me/584227930168')}
+                          style={{
+                            position: 'absolute',
+                            bottom: 80,
+                            right: 20,
+                            backgroundColor: '#25D366',
+                            width: 60,
+                            height: 60,
+                            borderRadius: 30,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            elevation: 5,
+                            shadowColor: '#000',
+                            shadowOffset: { width: 0, height: 2 },
+                            shadowOpacity: 0.3,
+                            shadowRadius: 3,
+                            zIndex: 1000
+                          }}
+                        >
+                          <Ionicons name="logo-whatsapp" size={32} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                    </SafeAreaView>
+                  )}
+                </Stack.Screen>
+                <Stack.Screen name="RaffleDetail" options={{ title: 'Detalle de Rifa' }}>
+                  {(props) => <RaffleDetailScreen {...props} api={api} />}
+                </Stack.Screen>
+              </>
+            ) : (
+              <Stack.Screen name="Auth" options={{ headerShown: false }}>
+                {() => <AuthScreen onAuth={handleAuth} />}
+              </Stack.Screen>
             )}
-          </Stack.Screen>
-          <Stack.Screen name="RaffleDetail" options={{ title: 'Detalle de Rifa' }}>
-            {(props) => <RaffleDetailScreen {...props} api={api} />}
-          </Stack.Screen>
-        </>
-        ) : (
-          <Stack.Screen name="Auth" options={{ headerShown: false }}>
-            {() => <AuthScreen onAuth={handleAuth} />}
-          </Stack.Screen>
-        )}
-        <Stack.Screen name="Legal" options={{ headerShown: false }}>
-          {(props) => <LegalScreen {...props} />}
-        </Stack.Screen>
-      </Stack.Navigator>
-      </NavigationContainer>
-      <ConfettiOverlay
-        visible={showConfetti}
-        onClose={handleCloseConfetti}
-        winData={winData}
-      />
-    </>
+            <Stack.Screen name="Legal" options={{ headerShown: false }}>
+              {(props) => <LegalScreen {...props} />}
+            </Stack.Screen>
+          </Stack.Navigator>
+        </NavigationContainer>
+        <ConfettiOverlay visible={showConfetti} onClose={handleCloseConfetti} winData={winData} />
+      </>
+    </AppErrorBoundary>
   );
 }
 
