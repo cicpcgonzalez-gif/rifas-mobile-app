@@ -114,6 +114,11 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [editingUser, setEditingUser] = useState(null); // For modal actions
   const [viewUser, setViewUser] = useState(null); // Para ver detalle de usuario (Hoja de Vida)
 
+  const [planConfigForm, setPlanConfigForm] = useState({ unlimitedWeeklyRaffleLimit: '3' });
+  const [savingPlanConfig, setSavingPlanConfig] = useState(false);
+  const [userPlanForm, setUserPlanForm] = useState({ tier: 'starter', raffleCreditsRemaining: '', boostCreditsRemaining: '' });
+  const [savingUserPlan, setSavingUserPlan] = useState(false);
+
   const [raffleTab, setRaffleTab] = useState('details'); // 'details' | 'payments'
   const [paymentMethods, setPaymentMethods] = useState([]); // Lista de métodos de pago multimoneda
 
@@ -163,6 +168,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [previewVisible, setPreviewVisible] = useState(false);
   const [raffles, setRaffles] = useState([]);
   const [selectedRaffle, setSelectedRaffle] = useState(null);
+  const [boostingRaffleId, setBoostingRaffleId] = useState(null);
+  const [activatingRaffleId, setActivatingRaffleId] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [verifierInput, setVerifierInput] = useState('');
   const [verifierResult, setVerifierResult] = useState(null);
@@ -357,6 +364,80 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     setProfileLoading(false);
   }, [api]);
 
+  const boostRaffle = useCallback((raffleId) => {
+    if (!raffleId) return;
+
+    Alert.alert(
+      'Destacar rifa',
+      'Elige la duración del boost.',
+      [
+        {
+          text: '24 horas',
+          onPress: async () => {
+            setBoostingRaffleId(raffleId);
+            const { res, data } = await api(`/admin/raffles/${raffleId}/boost`, {
+              method: 'POST',
+              body: JSON.stringify({ duration: '24h' })
+            });
+            setBoostingRaffleId(null);
+            if (res.ok) {
+              Alert.alert('Listo', data?.message || 'Rifa destacada.');
+              loadProfile();
+              loadRaffles();
+            } else {
+              Alert.alert('Error', data?.error || 'No se pudo destacar la rifa.');
+            }
+          }
+        },
+        {
+          text: '7 días',
+          onPress: async () => {
+            setBoostingRaffleId(raffleId);
+            const { res, data } = await api(`/admin/raffles/${raffleId}/boost`, {
+              method: 'POST',
+              body: JSON.stringify({ duration: '7d' })
+            });
+            setBoostingRaffleId(null);
+            if (res.ok) {
+              Alert.alert('Listo', data?.message || 'Rifa destacada.');
+              loadProfile();
+              loadRaffles();
+            } else {
+              Alert.alert('Error', data?.error || 'No se pudo destacar la rifa.');
+            }
+          }
+        },
+        { text: 'Cancelar', style: 'cancel' }
+      ]
+    );
+  }, [api, loadProfile, loadRaffles]);
+
+  const activateRaffle = useCallback((raffleId) => {
+    if (!raffleId) return;
+    Alert.alert(
+      'Activar rifa',
+      'Al activar se consume cupo (si aplica) y la rifa se publica.',
+      [
+        {
+          text: 'Activar',
+          onPress: async () => {
+            setActivatingRaffleId(raffleId);
+            const { res, data } = await api(`/admin/raffles/${raffleId}/activate`, { method: 'POST' });
+            setActivatingRaffleId(null);
+            if (res.ok) {
+              Alert.alert('Listo', data?.message || 'Rifa activada.');
+              loadProfile();
+              loadRaffles();
+            } else {
+              Alert.alert('Error', data?.error || 'No se pudo activar la rifa.');
+            }
+          }
+        },
+        { text: 'Cancelar', style: 'cancel' }
+      ]
+    );
+  }, [api, loadProfile, loadRaffles]);
+
   const loadRaffles = useCallback(async () => {
     const { res, data } = await api('/admin/raffles');
     if (res.ok && Array.isArray(data)) {
@@ -477,6 +558,11 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         if (s1.data?.smtp) setSmtpForm(s => ({ ...s, ...s1.data?.smtp }));
         if (s1.data?.techSupport) setTechSupportForm(s => ({ ...s, ...s1.data?.techSupport }));
 
+        const limit = s1.data?.company?.planConfig?.unlimitedWeeklyRaffleLimit;
+        if (typeof limit === 'number' && Number.isFinite(limit)) {
+          setPlanConfigForm({ unlimitedWeeklyRaffleLimit: String(limit) });
+        }
+
       }
       if (s2.res.ok && Array.isArray(s2.data)) {
         setUsers(s2.data);
@@ -490,6 +576,17 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     }
     setLoadingSuper(false);
   }, [api, user?.role]);
+
+  useEffect(() => {
+    if (!viewUser) return;
+    const p = viewUser?.adminPlan || null;
+    const tier = String(p?.tier || '').toLowerCase();
+    setUserPlanForm({
+      tier: ['starter', 'pro', 'unlimited'].includes(tier) ? tier : 'starter',
+      raffleCreditsRemaining: typeof p?.raffleCreditsRemaining === 'number' ? String(p.raffleCreditsRemaining) : '',
+      boostCreditsRemaining: typeof p?.boostCreditsRemaining === 'number' ? String(p.boostCreditsRemaining) : ''
+    });
+  }, [viewUser?.id]);
 
 
 
@@ -525,6 +622,30 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (res.ok) Alert.alert('Listo', 'Configuración SMTP guardada.');
     else Alert.alert('Error', data?.error || 'No se pudo guardar SMTP.');
     setSavingSmtp(false);
+  };
+
+  const savePlanConfig = async () => {
+    const raw = String(planConfigForm.unlimitedWeeklyRaffleLimit ?? '').trim();
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      return Alert.alert('Dato inválido', 'El límite semanal debe ser un número mayor o igual a 0.');
+    }
+
+    setSavingPlanConfig(true);
+    const { res, data } = await api('/superadmin/settings/company', {
+      method: 'PATCH',
+      body: JSON.stringify({ planConfig: { unlimitedWeeklyRaffleLimit: Math.floor(value) } })
+    });
+    if (res.ok) {
+      Alert.alert('Listo', 'Configuración de planes actualizada.');
+      const limit = data?.company?.planConfig?.unlimitedWeeklyRaffleLimit;
+      if (typeof limit === 'number' && Number.isFinite(limit)) {
+        setPlanConfigForm({ unlimitedWeeklyRaffleLimit: String(limit) });
+      }
+    } else {
+      Alert.alert('Error', data?.error || 'No se pudo guardar la configuración de planes.');
+    }
+    setSavingPlanConfig(false);
   };
 
   const saveTechSupport = async () => {
@@ -591,6 +712,57 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const revokeSessions = async (id) => {
     await api(`/superadmin/users/${id}/revoke-sessions`, { method: 'POST' });
     loadSuperAdminData();
+  };
+
+  const saveUserPlan = async () => {
+    if (!viewUser?.id) return;
+    if (viewUser.role !== 'admin') {
+      return Alert.alert('No aplica', 'El plan solo se asigna a usuarios con rol admin.');
+    }
+
+    const tier = String(userPlanForm.tier || '').toLowerCase();
+    if (!['starter', 'pro', 'unlimited'].includes(tier)) {
+      return Alert.alert('Plan inválido', 'Selecciona Starter, Pro o Unlimited.');
+    }
+
+    const payload = { tier };
+
+    if (tier !== 'unlimited') {
+      const rawCredits = String(userPlanForm.raffleCreditsRemaining ?? '').trim();
+      if (rawCredits !== '') {
+        const credits = Number(rawCredits);
+        if (!Number.isFinite(credits) || credits < 0) {
+          return Alert.alert('Dato inválido', 'Los cupos de rifas deben ser un número mayor o igual a 0.');
+        }
+        payload.raffleCreditsRemaining = Math.floor(credits);
+      }
+    }
+
+    const rawBoosts = String(userPlanForm.boostCreditsRemaining ?? '').trim();
+    if (rawBoosts !== '') {
+      const boosts = Number(rawBoosts);
+      if (!Number.isFinite(boosts) || boosts < 0) {
+        return Alert.alert('Dato inválido', 'Los boosts deben ser un número mayor o igual a 0.');
+      }
+      payload.boostCreditsRemaining = Math.floor(boosts);
+    }
+
+    setSavingUserPlan(true);
+    const { res, data } = await api(`/superadmin/users/${viewUser.id}/plan`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      Alert.alert('Listo', 'Plan actualizado.');
+      if (data) {
+        setViewUser(data);
+        setUsers(prev => prev.map(u => (u.id === data.id ? data : u)));
+        setFilteredUsers(prev => prev.map(u => (u.id === data.id ? data : u)));
+      }
+    } else {
+      Alert.alert('Error', data?.error || 'No se pudo actualizar el plan.');
+    }
+    setSavingUserPlan(false);
   };
 
   useFocusEffect(
@@ -1145,6 +1317,62 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                           </TouchableOpacity>
                       </View>
                   </View>
+
+                  {viewUser.role === 'admin' && (
+                    <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                      <Text style={styles.section}>Plan de Admin</Text>
+                      <Text style={[styles.muted, { marginBottom: 10 }]}>Asignación hecha por superadmin. El consumo aplica al activar (draft → activa).</Text>
+
+                      <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+                        {[
+                          { id: 'starter', label: 'Starter' },
+                          { id: 'pro', label: 'Pro' },
+                          { id: 'unlimited', label: 'Unlimited' }
+                        ].map(opt => (
+                          <TouchableOpacity
+                            key={opt.id}
+                            onPress={() => setUserPlanForm(s => ({ ...s, tier: opt.id }))}
+                            style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: userPlanForm.tier === opt.id ? 'rgba(96,165,250,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: userPlanForm.tier === opt.id ? '#60a5fa' : 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#e2e8f0', fontWeight: '800' }}>{opt.label}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
+                      <Text style={styles.section}>Cupos de rifas (Starter/Pro)</Text>
+                      <TextInput
+                        style={[styles.input, { opacity: userPlanForm.tier === 'unlimited' ? 0.6 : 1 }]}
+                        placeholder="Ej: 5 o 10"
+                        value={userPlanForm.raffleCreditsRemaining}
+                        onChangeText={(v) => setUserPlanForm(s => ({ ...s, raffleCreditsRemaining: v }))}
+                        keyboardType="numeric"
+                        editable={userPlanForm.tier !== 'unlimited'}
+                      />
+                      {userPlanForm.tier === 'unlimited' && (
+                        <Text style={[styles.muted, { marginTop: -6, marginBottom: 10 }]}>
+                          Unlimited no usa cupos. Límite semanal actual: {planConfigForm.unlimitedWeeklyRaffleLimit || '3'} activaciones/7 días.
+                        </Text>
+                      )}
+
+                      <Text style={styles.section}>Boosts (opcional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Ej: 0, 2, 8"
+                        value={userPlanForm.boostCreditsRemaining}
+                        onChangeText={(v) => setUserPlanForm(s => ({ ...s, boostCreditsRemaining: v }))}
+                        keyboardType="numeric"
+                      />
+
+                      <FilledButton
+                        title={savingUserPlan ? 'Guardando...' : 'Guardar Plan'}
+                        onPress={saveUserPlan}
+                        loading={savingUserPlan}
+                        disabled={savingUserPlan}
+                        icon={<Ionicons name="pricetag-outline" size={18} color="#fff" />}
+                      />
+                    </View>
+                  )}
+
                   <Text style={styles.section}>Historial Reciente</Text>
                   <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 16 }}>
                       <Text style={{ color: palette.muted, textAlign: 'center', fontStyle: 'italic' }}>
@@ -1201,6 +1429,25 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                           </View>
                         </View>
                         <FilledButton title={creating ? 'Creando...' : 'Crear Usuario'} onPress={createAccount} loading={creating} disabled={creating} icon={<Ionicons name="person-add-outline" size={18} color="#fff" />} />
+                      </View>
+
+                      <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: 12, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                        <Text style={styles.section}>Configuración de Planes</Text>
+                        <Text style={styles.muted}>Afecta a Unlimited (activaciones/7 días).</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Límite semanal unlimited"
+                          value={planConfigForm.unlimitedWeeklyRaffleLimit}
+                          onChangeText={(v) => setPlanConfigForm(s => ({ ...s, unlimitedWeeklyRaffleLimit: v }))}
+                          keyboardType="numeric"
+                        />
+                        <FilledButton
+                          title={savingPlanConfig ? 'Guardando...' : 'Guardar Configuración'}
+                          onPress={savePlanConfig}
+                          loading={savingPlanConfig}
+                          disabled={savingPlanConfig}
+                          icon={<Ionicons name="settings-outline" size={18} color="#fff" />}
+                        />
                       </View>
 
                       <Text style={styles.section}>Lista de Usuarios ({filteredUsers.length})</Text>
@@ -1796,18 +2043,45 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 ) : null}
               </View>
 
-              <Text style={[styles.section, { marginTop: 24 }]}>Rifas Existentes</Text>
+              {(() => {
+                const p = profile?.adminPlan || null;
+                const tier = String(p?.tier || '').toLowerCase();
+                const credits = typeof p?.raffleCreditsRemaining === 'number' ? p.raffleCreditsRemaining : null;
+                const boosts = typeof p?.boostCreditsRemaining === 'number' ? p.boostCreditsRemaining : null;
+                if (!tier) return null;
+                return (
+                  <View style={{ marginTop: 16, marginBottom: 8, padding: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: 'bold' }}>Plan: {tier.toUpperCase()}</Text>
+                    <Text style={{ color: palette.muted, fontSize: 12 }}>
+                      {tier === 'unlimited' ? 'Límite: rifas por semana (según configuración)' : `Cupos restantes: ${credits ?? '—'}`}
+                      {boosts !== null ? `  •  Boosts: ${boosts}` : ''}
+                    </Text>
+                  </View>
+                );
+              })()}
+
+              <Text style={[styles.section, { marginTop: 12 }]}>Rifas Existentes</Text>
               {raffles.filter(r => r).map(r => {
                 const sold = r.soldTickets || 0;
                 const total = r.totalTickets || 100;
                 const percent = total > 0 ? (sold / total) * 100 : 0;
+                const boost = r?.style?.boost;
+                const boostExp = boost?.expiresAt ? Date.parse(boost.expiresAt) : 0;
+                const boostActive = boostExp && boostExp > Date.now();
+                const status = String(r?.status || 'active').toLowerCase();
+                const statusLabel = status === 'draft' ? 'BORRADOR' : status === 'closed' ? 'CERRADA' : 'ACTIVA';
                 
                 return (
                 <View key={r.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: 'bold' }}>{r.title}</Text>
-                      <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {r.id} • {r.status === 'closed' ? 'CERRADA' : 'ABIERTA'}</Text>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {r.id} • {statusLabel}</Text>
+                      {boostActive && (
+                        <Text style={{ color: '#fbbf24', fontSize: 12, marginTop: 2 }}>
+                          Destacada hasta: {new Date(boostExp).toLocaleString()}
+                        </Text>
+                      )}
                       <View style={{ marginTop: 6 }}>
                         <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
                         <Text style={{ color: '#cbd5e1', fontSize: 10 }}>Vendidos: {sold}/{total} ({percent.toFixed(1)}%)</Text>
@@ -1844,11 +2118,39 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                         <Ionicons name="create-outline" size={20} color="#fff" />
                       </TouchableOpacity>
                       
-                      {r.status !== 'closed' && (
+                      {status !== 'closed' && (
                         <TouchableOpacity onPress={() => openWinnerModal(r.id)} style={{ padding: 8, backgroundColor: 'rgba(251, 191, 36, 0.2)', borderRadius: 8 }}>
                           <Ionicons name="trophy-outline" size={20} color="#fbbf24" />
                         </TouchableOpacity>
                       )}
+
+                      {status === 'draft' && (
+                        <TouchableOpacity
+                          onPress={() => activateRaffle(r.id)}
+                          disabled={activatingRaffleId === r.id}
+                          style={{
+                            padding: 8,
+                            backgroundColor: 'rgba(34, 197, 94, 0.18)',
+                            borderRadius: 8,
+                            opacity: activatingRaffleId === r.id ? 0.6 : 1
+                          }}
+                        >
+                          <Ionicons name="play-outline" size={20} color="#22c55e" />
+                        </TouchableOpacity>
+                      )}
+
+                      <TouchableOpacity
+                        onPress={() => boostRaffle(r.id)}
+                        disabled={boostingRaffleId === r.id || status !== 'active'}
+                        style={{
+                          padding: 8,
+                          backgroundColor: boostActive ? 'rgba(251, 191, 36, 0.25)' : 'rgba(255,255,255,0.1)',
+                          borderRadius: 8,
+                          opacity: boostingRaffleId === r.id || status !== 'active' ? 0.6 : 1
+                        }}
+                      >
+                        <Ionicons name={boostActive ? 'star' : 'star-outline'} size={20} color={boostActive ? '#fbbf24' : '#fff'} />
+                      </TouchableOpacity>
 
                       {user?.role === 'superadmin' && (
                         <TouchableOpacity onPress={() => deleteRaffle(r.id)} style={{ padding: 8, backgroundColor: 'rgba(248, 113, 113, 0.2)', borderRadius: 8 }}>
