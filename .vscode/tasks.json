@@ -4,7 +4,17 @@
 		{
 			"label": "Build APK (Android)",
 			"type": "shell",
-			"command": "cd android; ./gradlew assembleRelease",
+			"command": "cd android; .\\gradlew.bat assembleRelease",
+			"isBackground": false,
+			"problemMatcher": [
+				"$gradle"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Build APK (Android - Short Path)",
+			"type": "shell",
+			"command": "cd C:\\w\\megarifas\\android; .\\gradlew.bat assembleRelease",
 			"isBackground": false,
 			"problemMatcher": [
 				"$gradle"

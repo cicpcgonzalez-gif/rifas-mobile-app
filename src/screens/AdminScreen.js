@@ -166,6 +166,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [tickets, setTickets] = useState([]);
   const [verifierInput, setVerifierInput] = useState('');
   const [verifierResult, setVerifierResult] = useState(null);
+  const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' });
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '1', paymentMethods: ['mobile_payment'] });
@@ -410,6 +411,49 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (res.ok && Array.isArray(data)) setTickets(data);
     setTicketsLoading(false);
   }, [api, ticketFilters]);
+
+  const verifyQuickTicket = useCallback(async () => {
+    const input = String(verifierInput || '').trim();
+    if (!input) return;
+
+    setVerifierLoading(true);
+    setVerifierResult(null);
+
+    try {
+      // 1) Intentar verificación exacta por serial (admin-only) para traer datos del comprador.
+      const { res, data } = await api(`/admin/verify-ticket/${encodeURIComponent(input)}`);
+      if (res.ok && data?.valid && data?.ticket) {
+        setVerifierResult({ status: 'found', ticket: data.ticket });
+        return;
+      }
+
+      // 2) Fallback: si el input es número, intentar encontrarlo en la lista cargada.
+      const localFound = tickets.find(
+        (t) => String(t.number) === input || String(t.serialNumber) === input
+      );
+
+      if (localFound) {
+        // Si tenemos serial, volvemos a consultar para obtener comprador desencriptado.
+        const serial = localFound.serialNumber;
+        if (serial) {
+          const remote = await api(`/admin/verify-ticket/${encodeURIComponent(String(serial))}`);
+          if (remote.res.ok && remote.data?.valid && remote.data?.ticket) {
+            setVerifierResult({ status: 'found', ticket: remote.data.ticket });
+            return;
+          }
+        }
+
+        setVerifierResult({ status: 'found', ticket: localFound });
+        return;
+      }
+
+      setVerifierResult({ status: 'not_found' });
+    } catch (e) {
+      setVerifierResult({ status: 'not_found' });
+    } finally {
+      setVerifierLoading(false);
+    }
+  }, [api, tickets, verifierInput]);
 
   const loadSuperAdminData = useCallback(async () => {
     // Load Tech Support for everyone (Admins need to see it too)
@@ -695,6 +739,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const closeProofViewer = () => setProofViewer({ visible: false, uri: '' });
 
   const editRaffle = (raffle) => {
+    const stylePaymentMethods = Array.isArray(raffle?.style?.paymentMethods) ? raffle.style.paymentMethods : null;
     setRaffleForm({
       id: raffle.id,
       title: raffle.title || '',
@@ -708,7 +753,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       instantWins: raffle.instantWins ? raffle.instantWins.join(', ') : '',
       terms: raffle.terms || '',
       minTickets: String(raffle.minTickets || '1'),
-      paymentMethods: raffle.paymentMethods || ['mobile_payment']
+      paymentMethods: Array.isArray(raffle.paymentMethods) ? raffle.paymentMethods : (stylePaymentMethods || ['mobile_payment'])
     });
   };
 
@@ -735,7 +780,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         gallery: styleForm.gallery,
         themeColor: styleForm.themeColor,
         whatsapp: styleForm.whatsapp,
-        instagram: styleForm.instagram
+        instagram: styleForm.instagram,
+        paymentMethods: raffleForm.paymentMethods
       }
     };
     const { res, data } = await api(`/admin/raffles/${selectedRaffle.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -802,7 +848,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
             gallery: styleForm.gallery,
             themeColor: styleForm.themeColor,
             whatsapp: styleForm.whatsapp,
-            instagram: styleForm.instagram
+            instagram: styleForm.instagram,
+            paymentMethods: raffleForm.paymentMethods
           }
         };
         const styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(stylePayload) });
@@ -1214,24 +1261,21 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                         <View style={{ flexDirection: 'row', gap: 10 }}>
                         <TextInput 
                             style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 18, fontWeight: 'bold', textAlign: 'center' }]} 
-                            placeholder="# Ticket" 
+                            placeholder="Serial o # Ticket" 
                             value={verifierInput} 
                             onChangeText={setVerifierInput} 
-                            keyboardType="numeric"
+                            autoCapitalize="none"
                         />
                         <TouchableOpacity 
-                            onPress={() => {
-                            if (!verifierInput) return;
-                            const found = tickets.find(t => String(t.number) === verifierInput || String(t.serialNumber) === verifierInput);
-                            if (found) {
-                                setVerifierResult({ status: 'found', ticket: found });
-                            } else {
-                                setVerifierResult({ status: 'not_found' });
-                            }
-                            }}
-                            style={{ backgroundColor: palette.primary, paddingHorizontal: 20, justifyContent: 'center', borderRadius: 12 }}
+                            onPress={verifyQuickTicket}
+                            disabled={verifierLoading}
+                            style={{ backgroundColor: palette.primary, paddingHorizontal: 20, justifyContent: 'center', borderRadius: 12, opacity: verifierLoading ? 0.7 : 1 }}
                         >
-                            <Ionicons name="scan-outline" size={24} color="#fff" />
+                            {verifierLoading ? (
+                              <ActivityIndicator color="#fff" />
+                            ) : (
+                              <Ionicons name="scan-outline" size={24} color="#fff" />
+                            )}
                         </TouchableOpacity>
                         </View>
                         
@@ -1240,8 +1284,23 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                             {verifierResult.status === 'found' ? (
                             <>
                                 <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡TICKET VÁLIDO!</Text>
-                                <Text style={{ color: '#fff', textAlign: 'center', marginTop: 4 }}>Dueño: {verifierResult.ticket.buyer?.firstName || verifierResult.ticket.user?.name || 'Desconocido'}</Text>
-                                <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Estado: {(verifierResult.ticket.status || 'unknown').toUpperCase()}</Text>
+                                {(() => {
+                                  const t = verifierResult.ticket || {};
+                                  const buyer = t.buyer || t.user || {};
+                                  const buyerName = buyer.firstName || buyer.name || t.holder || 'Desconocido';
+                                  const buyerEmail = buyer.email || '—';
+                                  const buyerPhone = buyer.phone || buyer.cedula || '—';
+                                  const raffleTitle = t.raffle?.title || t.raffle || t.raffleTitle || '—';
+                                  return (
+                                    <>
+                                      <Text style={{ color: '#fff', textAlign: 'center', marginTop: 4 }}>Comprador: {buyerName}</Text>
+                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Email: {buyerEmail}</Text>
+                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Tel/Cédula: {buyerPhone}</Text>
+                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Rifa: {raffleTitle}</Text>
+                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Estado: {(t.status || 'unknown').toUpperCase()}</Text>
+                                    </>
+                                  );
+                                })()}
                             </>
                             ) : (
                             <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>NO ENCONTRADO</Text>
@@ -1413,6 +1472,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               />
             </View>
         ) : (
+        <>
         <ScrollView contentContainerStyle={styles.scroll}>
           
           {/* Wallet pill removed per request */}
@@ -1699,19 +1759,28 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               </View>
 
               {/* Otros Métodos (Placeholders) */}
-              {['Zelle', 'Binance', 'Transferencia'].map(method => (
-                <TouchableOpacity 
-                  key={method}
-                  onPress={() => Alert.alert('Próximamente', `La integración con ${method} estará disponible pronto.`)}
-                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, marginBottom: 8, opacity: 0.5 }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <Ionicons name={method === 'Zelle' ? 'cash-outline' : method === 'Binance' ? 'logo-bitcoin' : 'card-outline'} size={24} color="#94a3b8" />
-                    <Text style={{ color: '#94a3b8', fontWeight: 'bold' }}>{method}</Text>
-                  </View>
-                  <Ionicons name="lock-closed-outline" size={16} color="#94a3b8" />
-                </TouchableOpacity>
-              ))}
+              {[{ key: 'zelle', label: 'Zelle', icon: 'cash-outline' }, { key: 'binance', label: 'Binance', icon: 'logo-bitcoin' }, { key: 'transfer', label: 'Transferencia', icon: 'card-outline' }].map(({ key, label, icon }) => {
+                const methods = raffleForm.paymentMethods || [];
+                const enabled = methods.includes(key);
+                return (
+                  <TouchableOpacity
+                    key={key}
+                    onPress={() => {
+                      const next = enabled ? methods.filter(m => m !== key) : [...methods, key];
+                      setRaffleForm(s => ({ ...s, paymentMethods: next }));
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, backgroundColor: enabled ? 'rgba(16, 185, 129, 0.1)' : 'rgba(255,255,255,0.05)', borderRadius: 12, marginBottom: 8 }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <Ionicons name={icon} size={24} color={enabled ? '#10b981' : '#94a3b8'} />
+                      <Text style={{ color: enabled ? '#fff' : '#94a3b8', fontWeight: 'bold' }}>{label}</Text>
+                    </View>
+                    <View style={{ width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: enabled ? '#10b981' : '#94a3b8', alignItems: 'center', justifyContent: 'center' }}>
+                      {enabled && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#10b981' }} />}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
 
 
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 24 }}>
@@ -2378,7 +2447,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 onPress={() => {
                   setSupportVisible(false);
                   setSupportMessage('');
-                  Alert.alert('Enviado', 'Hemos registrado tu reporte. Te contactaremos pronto.');
+                  Alert.alert('Enviado', 'Hemos registrado tu reporte. Te notificaremos cuando haya una actualización.');
                 }}
                 icon={<Ionicons name="bug-outline" size={18} color="#fff" />}
               />
@@ -2482,6 +2551,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
             </View>
           </View>
         </Modal>
+        </>
+        )}
       </SafeAreaView>
     </LinearGradient>
   );

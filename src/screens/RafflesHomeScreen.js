@@ -63,6 +63,7 @@ const PulsingBadge = () => {
 export default function RafflesHomeScreen({ navigation, api, user }) {
   const [raffles, setRaffles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [supportVisible, setSupportVisible] = useState(false);
   const [supportMessage, setSupportMessage] = useState('');
   const [techSupport, setTechSupport] = useState(null);
@@ -116,7 +117,15 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         end={{ x: 1, y: 1 }}
       >
       <FlatList
-        data={loading ? [] : raffles.slice().sort((a, b) => {
+        data={loading ? [] : raffles
+          .filter((r) => {
+            const q = String(searchQuery || '').trim().toLowerCase();
+            if (!q) return true;
+            const haystack = `${r?.title || ''} ${r?.prize || ''} ${r?.lottery || ''}`.toLowerCase();
+            return haystack.includes(q);
+          })
+          .slice()
+          .sort((a, b) => {
             if (filter === 'cheap') return Number(a.price || 0) - Number(b.price || 0);
             if (filter === 'closing') return new Date(a.endDate || 0) - new Date(b.endDate || 0);
             return 0;
@@ -184,6 +193,25 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                 </TouchableOpacity>
               </View>
             </Animated.View>
+
+            <View style={{ paddingHorizontal: 16, marginTop: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12 }}>
+                <Ionicons name="search-outline" size={18} color="#94a3b8" />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Buscar rifas..."
+                  placeholderTextColor="#94a3b8"
+                  style={{ flex: 1, color: '#fff', paddingVertical: 10, paddingHorizontal: 10 }}
+                  autoCapitalize="none"
+                />
+                {!!searchQuery && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 6 }}>
+                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 8, gap: 8, paddingHorizontal: 16, marginBottom: 10 }}>
               {[{ id: 'all', label: 'Todas' }, { id: 'closing', label: 'Próximas a cerrar' }, { id: 'cheap', label: 'Menor precio' }].map(opt => (
@@ -384,7 +412,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
               onPress={() => {
                 setSupportVisible(false);
                 setSupportMessage('');
-                Alert.alert('Enviado', 'Hemos registrado tu mensaje. Te responderemos pronto.');
+                Alert.alert('Enviado', 'Hemos registrado tu mensaje. Te notificaremos cuando haya respuesta.');
               }}
               icon={<Ionicons name="chatbubble-ellipses-outline" size={18} color="#fff" />}
             />

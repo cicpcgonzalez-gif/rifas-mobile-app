@@ -6,7 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Alert
+  Alert,
+  Linking
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,7 +41,7 @@ export default function WalletScreen({ api }) {
         setMovements(data?.transactions || []);
       }
       
-      const { res: pRes, data: pData } = await api('/payments/my');
+      const { res: pRes, data: pData } = await api('/me/payments');
       if (pRes.ok) {
         setPayments(pData || []);
       }
@@ -118,7 +119,25 @@ export default function WalletScreen({ api }) {
               <Ionicons name="add" size={18} color="#0b1224" />
               <Text style={styles.ctaButtonPrimaryText}>Recargar</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.ctaButtonGhost} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.ctaButtonGhost}
+              activeOpacity={0.9}
+              onPress={() => {
+                Alert.alert(
+                  'Retirar saldo',
+                  'Para solicitar un retiro, contáctanos por WhatsApp con el monto y tus datos de pago.',
+                  [
+                    { text: 'Cancelar', style: 'cancel' },
+                    {
+                      text: 'Abrir WhatsApp',
+                      onPress: () => {
+                        Linking.openURL('https://wa.me/584227930168');
+                      }
+                    }
+                  ]
+                );
+              }}
+            >
               <Ionicons name="arrow-down" size={18} color="#e2e8f0" />
               <Text style={styles.ctaButtonGhostText}>Retirar</Text>
             </TouchableOpacity>

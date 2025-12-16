@@ -41,17 +41,29 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const [bankDetails, setBankDetails] = useState(null);
   const stats = current?.stats || {};
   const style = current?.style || {};
+  const safeGallery = Array.isArray(style?.gallery)
+    ? style.gallery.filter((uri) => typeof uri === 'string' && uri.trim().length > 0)
+    : [];
+  const safeBannerImage = typeof style?.bannerImage === 'string' && style.bannerImage.trim().length > 0
+    ? style.bannerImage
+    : null;
   const themeColor = style?.themeColor || palette.primary;
   const [viewProfileId, setViewProfileId] = useState(null);
   const [termsVisible, setTermsVisible] = useState(false);
+  const userDisplayName = current?.user?.name || current?.user?.firstName || 'MegaRifas Oficial';
+  const userInitial = (String(userDisplayName).trim().charAt(0) || 'M').toUpperCase();
   const totalTickets = current?.totalTickets || stats?.total || 0;
   const sold = stats?.sold || 0;
   const remaining = stats?.remaining ?? (totalTickets ? Math.max(totalTickets - sold, 0) : 0);
   const percentLeft = totalTickets ? Math.max(0, Math.min(100, (remaining / totalTickets) * 100)) : 0;
+  const safeSecurityId = typeof current?.user?.securityId === 'string' ? current.user.securityId : '';
+  const safeAvatarUri = typeof current?.user?.avatar === 'string' && current.user.avatar.trim().length > 0 ? current.user.avatar : null;
+  const ticketNumber = ticket?.number ?? (Array.isArray(ticket?.numbers) ? ticket.numbers[0] : ticket?.numbers);
 
   // Fetch full raffle details if missing critical data
   useEffect(() => {
     if (!current || !current.id) return;
+    if (!api || typeof api !== 'function') return;
     // If stats or style are missing, fetch fresh data
     if (!current.stats || !current.style) {
       api(`/raffles/${current.id}`).then(({ res, data }) => {
@@ -144,10 +156,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
-        {style.gallery && style.gallery.length > 0 ? (
+        {safeGallery.length > 0 ? (
           <View style={{ height: 260, marginBottom: 16 }}>
             <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-              {style.gallery.map((img, index) => (
+              {safeGallery.map((img, index) => (
                 <View key={index} style={{ width: width - 32, height: 260, borderRadius: 12, overflow: 'hidden', marginRight: 0, backgroundColor: 'rgba(255,255,255,0.04)' }}>
                   <ImageBackground source={{ uri: img }} style={{ flex: 1 }} blurRadius={12}>
                     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
@@ -158,16 +170,16 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
               ))}
             </ScrollView>
             <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-              {style.gallery.map((_, i) => (
+              {safeGallery.map((_, i) => (
                 <View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.5)' }} />
               ))}
             </View>
           </View>
-        ) : style.bannerImage ? (
+        ) : safeBannerImage ? (
           <View style={{ height: 220, marginBottom: 16, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)' }}>
-            <ImageBackground source={{ uri: style.bannerImage }} style={{ flex: 1 }} blurRadius={12}>
+            <ImageBackground source={{ uri: safeBannerImage }} style={{ flex: 1 }} blurRadius={12}>
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
-                <Image source={{ uri: style.bannerImage }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+                <Image source={{ uri: safeBannerImage }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
               </View>
             </ImageBackground>
           </View>
@@ -201,22 +213,22 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             onPress={() => current.user && setViewProfileId(current.user.id)}
           >
             <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-               {current.user?.avatar ? (
-                 <Image source={{ uri: current.user.avatar }} style={{ width: 40, height: 40, borderRadius: 20 }} />
+               {safeAvatarUri ? (
+                 <Image source={{ uri: safeAvatarUri }} style={{ width: 40, height: 40, borderRadius: 20 }} />
                ) : (
-                 <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 18 }}>{current.user?.name?.charAt(0).toUpperCase() || 'M'}</Text>
+                 <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 18 }}>{userInitial}</Text>
                )}
             </View>
             <View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16, marginRight: 4 }}>
-                  {current.user?.name || 'MegaRifas Oficial'}
+                  {userDisplayName}
                 </Text>
                 {current.user?.identityVerified && <Ionicons name="checkmark-circle" size={14} color="#3b82f6" />}
               </View>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="shield-checkmark" size={12} color="#fbbf24" style={{ marginRight: 4 }} />
-                <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>ID: {current.user?.securityId ? current.user.securityId.slice(-8).toUpperCase() : 'VERIFICADO'}</Text>
+                <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>ID: {safeSecurityId ? safeSecurityId.slice(-8).toUpperCase() : 'VERIFICADO'}</Text>
               </View>
             </View>
             <View style={{ flex: 1, alignItems: 'flex-end' }}>
@@ -259,10 +271,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           )}
         </View>
 
-        {(!style.paymentMethods || style.paymentMethods.includes('mobile_payment')) && (
+        {(!style.paymentMethods || (Array.isArray(style.paymentMethods) && style.paymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m)))) && (
         <View style={styles.card}>
           <View style={styles.sectionRow}>
-            <Text style={[styles.section, { color: themeColor }]}>Pago móvil guiado</Text>
+            <Text style={[styles.section, { color: themeColor }]}>Pago manual guiado</Text>
             <TouchableOpacity onPress={() => setSupportVisible(true)} style={[styles.pill, { backgroundColor: 'rgba(34,211,238,0.14)' }]}> 
               <Ionicons name="help-circle-outline" size={16} color={palette.accent} />
               <Text style={{ color: palette.text, fontWeight: '700' }}>Ayuda</Text>
@@ -341,7 +353,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             <Text style={styles.section}>Tu Ticket</Text>
             <View style={{ alignItems: 'center', marginVertical: 10 }}>
               <Text style={{ color: palette.primary, fontSize: 32, fontWeight: 'bold' }}>
-                #{formatTicketNumber(ticket.number, current.digits)}
+                #{formatTicketNumber(ticketNumber, current.digits)}
               </Text>
               <Text style={{ color: palette.muted, fontSize: 12 }}>Serial: {ticket.serialNumber}</Text>
             </View>
