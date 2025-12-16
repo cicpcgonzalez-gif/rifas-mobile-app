@@ -28,6 +28,52 @@ import { FilledButton, OutlineButton } from '../components/UI';
 
 const formatTicketNumber = (value, digits = 4) => String(value ?? '').padStart(digits, '0');
 
+const ensureArray = (value) => (Array.isArray(value) ? value : []);
+
+const splitCsv = (value) => {
+  if (typeof value !== 'string') return [];
+  return value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+};
+
+const normalizeRaffle = (raffle) => {
+  const safe = raffle && typeof raffle === 'object' ? raffle : null;
+  if (!safe) return null;
+
+  const instantWins = Array.isArray(safe.instantWins)
+    ? safe.instantWins
+    : typeof safe.instantWins === 'string'
+      ? splitCsv(safe.instantWins)
+      : [];
+
+  const paymentMethods = Array.isArray(safe.paymentMethods)
+    ? safe.paymentMethods
+    : typeof safe.paymentMethods === 'string'
+      ? splitCsv(safe.paymentMethods)
+      : [];
+
+  const styleSafe = safe.style && typeof safe.style === 'object' ? safe.style : {};
+  const style = {
+    ...styleSafe,
+    gallery: ensureArray(styleSafe.gallery)
+  };
+
+  return {
+    ...safe,
+    instantWins,
+    paymentMethods,
+    style
+  };
+};
+
+const formatInstantWinsForInput = (instantWins) => {
+  if (Array.isArray(instantWins)) return instantWins.join(', ');
+  if (typeof instantWins === 'string') return instantWins;
+  return '';
+};
+
 const ProgressBar = ({ progress, color }) => (
   <View style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 3, marginVertical: 8, overflow: 'hidden' }}>
     <View style={{ width: `${Math.min(Math.max(progress, 0), 100)}%`, height: '100%', backgroundColor: color, borderRadius: 3 }} />
@@ -40,20 +86,34 @@ const MAX_GALLERY_IMAGES = 5;
 class AdminScreenErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null, errorInfo: null };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
   }
 
-  componentDidCatch(error) {
+  componentDidCatch(error, errorInfo) {
     // In release builds the stack is limited; keep a small hint for debugging.
     console.error('AdminScreen render error:', error);
+    this.setState({ error, errorInfo });
   }
 
   render() {
     if (this.state.hasError) {
+      const errorMessage =
+        this.state?.error?.message ||
+        (typeof this.state?.error === 'string' ? this.state.error : '') ||
+        String(this.state?.error || '');
+
+      const componentStack = this.state?.errorInfo?.componentStack
+        ? String(this.state.errorInfo.componentStack).trim()
+        : '';
+
+      const errorStack = this.state?.error?.stack
+        ? String(this.state.error.stack).trim()
+        : '';
+
       return (
         <View style={{ flex: 1, padding: 16, justifyContent: 'center' }}>
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
@@ -62,6 +122,26 @@ class AdminScreenErrorBoundary extends React.Component {
           <Text style={{ color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
             Si el problema persiste, vuelve al menú e inténtalo nuevamente.
           </Text>
+
+          {(errorMessage || componentStack || errorStack) ? (
+            <ScrollView style={{ marginTop: 14, maxHeight: 260 }}>
+              {!!errorMessage && (
+                <Text selectable style={{ color: '#cbd5e1', fontSize: 12, lineHeight: 16 }}>
+                  Detalle: {errorMessage}
+                </Text>
+              )}
+              {!!errorStack && (
+                <Text selectable style={{ color: '#94a3b8', marginTop: 10, fontSize: 11, lineHeight: 14 }}>
+                  Stack: {errorStack}
+                </Text>
+              )}
+              {!!componentStack && (
+                <Text selectable style={{ color: '#64748b', marginTop: 10, fontSize: 11, lineHeight: 14 }}>
+                  {componentStack}
+                </Text>
+              )}
+            </ScrollView>
+          ) : null}
         </View>
       );
     }
@@ -106,7 +186,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
           startDate: r.startDate ? r.startDate.slice(0, 10) : '',
           endDate: r.endDate ? r.endDate.slice(0, 10) : '',
           lottery: r.lottery || '',
-          instantWins: r.instantWins ? r.instantWins.join(', ') : '',
+          instantWins: formatInstantWinsForInput(r.instantWins),
           terms: r.terms || '',
           securityCode: r.securityCode || ''
         });
@@ -483,21 +563,31 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   }, [api, loadProfile, loadRaffles]);
 
   const loadRaffles = useCallback(async () => {
-    const { res, data } = await api('/admin/raffles');
-    if (res.ok && Array.isArray(data)) {
-      setRaffles(data);
-      if (!selectedRaffle && data?.length) {
-        const first = data[0];
-        setSelectedRaffle(first);
-        setStyleForm({
-          raffleId: first.id,
-          bannerImage: first.style?.bannerImage || '',
-          themeColor: first.style?.themeColor || '#2563eb',
-          accentColor: first.style?.accentColor || '#10b981',
-          headline: first.style?.headline || '',
-          ctaText: first.style?.ctaText || ''
-        });
+    try {
+      const { res, data } = await api('/admin/raffles');
+      if (res.ok && Array.isArray(data)) {
+        const normalized = data.map(normalizeRaffle).filter(Boolean);
+        setRaffles(normalized);
+        if (!selectedRaffle && normalized.length) {
+          const first = normalized[0];
+          setSelectedRaffle(first);
+          setStyleForm({
+            raffleId: first.id,
+            bannerImage: first.style?.bannerImage || '',
+            gallery: ensureArray(first.style?.gallery),
+            themeColor: first.style?.themeColor || '#2563eb',
+            accentColor: first.style?.accentColor || '#10b981',
+            headline: first.style?.headline || '',
+            ctaText: first.style?.ctaText || '',
+            whatsapp: first.style?.whatsapp || '',
+            instagram: first.style?.instagram || ''
+          });
+        }
+      } else {
+        setRaffles([]);
       }
+    } catch (_err) {
+      setRaffles([]);
     }
   }, [api, selectedRaffle]);
 
@@ -944,12 +1034,12 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (!result.canceled && result.assets?.length) {
       const asset = result.assets[0];
       const normalized = await normalizeImage(asset, { maxWidth: 1400, compress: 0.85 });
-      setStyleForm(s => ({ ...s, gallery: [...(s.gallery || []), normalized] }));
+      setStyleForm((s) => ({ ...s, gallery: [...ensureArray(s.gallery), normalized] }));
     }
   };
 
   const removeGalleryImage = (index) => {
-    setStyleForm(s => ({ ...s, gallery: (s.gallery || []).filter((_, i) => i !== index) }));
+    setStyleForm((s) => ({ ...s, gallery: ensureArray(s.gallery).filter((_, i) => i !== index) }));
   };
 
   const closeProofViewer = () => setProofViewer({ visible: false, uri: '' });
@@ -1987,7 +2077,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Agregar Foto</Text>
               </TouchableOpacity>
               
-              {(styleForm.gallery && styleForm.gallery.length > 0) && (
+              {Array.isArray(styleForm.gallery) && styleForm.gallery.length > 0 && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
                   {styleForm.gallery.map((img, index) => (
                     <View key={index} style={{ marginRight: 8, position: 'relative' }}>
@@ -2106,9 +2196,10 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               })()}
 
               <Text style={[styles.section, { marginTop: 12 }]}>Rifas Existentes</Text>
-              {raffles.filter(r => r).map(r => {
-                const sold = r.soldTickets || 0;
-                const total = r.totalTickets || 100;
+              {(Array.isArray(raffles) ? raffles : []).filter((r) => r).map((r, idx) => {
+                const sold = Number(r?.soldTickets) || 0;
+                const totalRaw = Number(r?.totalTickets);
+                const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : 100;
                 const percent = total > 0 ? (sold / total) * 100 : 0;
                 const boost = r?.style?.boost;
                 const boostExp = boost?.expiresAt ? Date.parse(boost.expiresAt) : 0;
@@ -2117,11 +2208,11 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 const statusLabel = status === 'draft' ? 'BORRADOR' : status === 'closed' ? 'CERRADA' : 'ACTIVA';
                 
                 return (
-                <View key={r.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
+                <View key={String(r?.id ?? idx)} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#fff', fontWeight: 'bold' }}>{r.title}</Text>
-                      <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {r.id} • {statusLabel}</Text>
+                      <Text style={{ color: '#fff', fontWeight: 'bold' }}>{String(r?.title ?? '')}</Text>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {String(r?.id ?? '')} • {statusLabel}</Text>
                       {boostActive && (
                         <Text style={{ color: '#fbbf24', fontSize: 12, marginTop: 2 }}>
                           Destacada hasta: {new Date(boostExp).toLocaleString()}
@@ -2136,7 +2227,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                       <TouchableOpacity onPress={() => {
                         setRaffleForm({
                           id: r.id,
-                          title: r.title,
+                          title: String(r?.title ?? ''),
                           price: String(r.price),
                           description: r.description || '',
                           totalTickets: String(r.totalTickets),
@@ -2144,17 +2235,17 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                           endDate: r.endDate ? r.endDate.split('T')[0] : '',
                           securityCode: r.securityCode || '',
                           lottery: r.lottery || '',
-                          instantWins: r.instantWins ? r.instantWins.join(', ') : '',
+                          instantWins: formatInstantWinsForInput(r.instantWins),
                           terms: r.terms || '',
                           digits: r.digits || 4,
                           minTickets: String(r.minTickets || '1'),
-                          paymentMethods: r.paymentMethods || ['mobile_payment']
+                          paymentMethods: (Array.isArray(r.paymentMethods) && r.paymentMethods.length) ? r.paymentMethods : ['mobile_payment']
                         });
                         // Pre-load style form as well
                         setStyleForm({
                           raffleId: r.id,
                           bannerImage: r.style?.bannerImage || '',
-                          gallery: r.style?.gallery || [],
+                          gallery: ensureArray(r.style?.gallery),
                           themeColor: r.style?.themeColor || '#2563eb',
                           whatsapp: r.style?.whatsapp || '',
                           instagram: r.style?.instagram || ''
