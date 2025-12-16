@@ -36,6 +36,39 @@ const ProgressBar = ({ progress, color }) => (
 
 const STANDARD_ASPECT = [16, 9];
 const MAX_GALLERY_IMAGES = 5;
+
+class AdminScreenErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    // In release builds the stack is limited; keep a small hint for debugging.
+    console.error('AdminScreen render error:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, padding: 16, justifyContent: 'center' }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
+            Ocurrió un error al cargar esta pantalla
+          </Text>
+          <Text style={{ color: '#94a3b8', marginTop: 10, textAlign: 'center' }}>
+            Si el problema persiste, vuelve al menú e inténtalo nuevamente.
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const normalizeImage = async (asset, { maxWidth = 1024, compress = 0.7 } = {}) => {
   const targetWidth = Math.min(maxWidth, asset?.width || maxWidth);
   const manipResult = await ImageManipulator.manipulateAsync(
@@ -1253,15 +1286,16 @@ export default function AdminScreen({ api, user, modulesConfig }) {
 
   return (
     <LinearGradient colors={['#0F172A', '#1E1B4B']} style={styles.container}>
-      <SafeAreaView style={{ flex: 1 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
-          <Text style={[styles.title, { marginBottom: 0 }]}>{user?.role === 'superadmin' ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
-          {techSupport && (
-            <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
-              <Ionicons name="help-circle-outline" size={28} color="#fff" />
-            </TouchableOpacity>
-          )}
-        </View>
+      <AdminScreenErrorBoundary>
+        <SafeAreaView style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
+            <Text style={[styles.title, { marginBottom: 0 }]}>{user?.role === 'superadmin' ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
+            {techSupport && (
+              <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
+                <Ionicons name="help-circle-outline" size={28} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </View>
 
         {activeSection === 'sa_users' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
@@ -2866,7 +2900,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         </Modal>
         </>
         )}
-      </SafeAreaView>
+        </SafeAreaView>
+      </AdminScreenErrorBoundary>
     </LinearGradient>
   );
 }
