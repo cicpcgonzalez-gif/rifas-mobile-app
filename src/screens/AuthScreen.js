@@ -17,9 +17,20 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { ENV } from '../config/env';
 import { palette } from '../theme';
 import { HeroBanner, FilledButton, OutlineButton } from '../components/UI';
+
+const APP_SLOGAN = 'Tu suerte empieza aquí.';
+
+const getAppVersionLabel = () => {
+  const version = Constants?.expoConfig?.version || Constants?.manifest?.version;
+  const androidCode = Constants?.expoConfig?.android?.versionCode;
+  if (version && androidCode) return `v${version} (${androidCode})`;
+  if (version) return `v${version}`;
+  return 'v—';
+};
 
 const VENEZUELA_STATES = [
   'Amazonas', 'Anzoategui', 'Apure', 'Aragua', 'Barinas', 'Bolivar', 'Carabobo', 'Cojedes',
@@ -566,9 +577,9 @@ export default function AuthScreen({ onAuth }) {
               </View>
             )}
             <View style={{ marginTop: 40, alignItems: 'center', paddingBottom: 20 }}>
-              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>Desarrollado por Quantic Solution C.A.</Text>
+              <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>{APP_SLOGAN}</Text>
               <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.7 }}>RIF-j408537010</Text>
-              <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.5 }}>v1.0.0</Text>
+              <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.5 }}>{getAppVersionLabel()}</Text>
               <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.5 }}>© 2025 MegaRifas. Todos los derechos reservados.</Text>
             </View>
           </ScrollView>

@@ -288,8 +288,12 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
               <Text style={styles.muted}>Banco: <Text style={{ color: '#fff' }}>{bankDetails.bank}</Text></Text>
               <Text style={styles.muted}>Teléfono: <Text style={{ color: '#fff' }}>{bankDetails.phone}</Text></Text>
               <Text style={styles.muted}>Cédula: <Text style={{ color: '#fff' }}>{bankDetails.cedula}</Text></Text>
-              {bankDetails.type && <Text style={styles.muted}>Tipo: <Text style={{ color: '#fff' }}>{bankDetails.type}</Text></Text>}
-              {bankDetails.account && <Text style={styles.muted}>Cuenta: <Text style={{ color: '#fff' }}>{bankDetails.account}</Text></Text>}
+              {(bankDetails.type != null && String(bankDetails.type).trim() !== '') ? (
+                <Text style={styles.muted}>Tipo: <Text style={{ color: '#fff' }}>{bankDetails.type}</Text></Text>
+              ) : null}
+              {(bankDetails.account != null && String(bankDetails.account).trim() !== '') ? (
+                <Text style={styles.muted}>Cuenta: <Text style={{ color: '#fff' }}>{bankDetails.account}</Text></Text>
+              ) : null}
             </View>
           )}
 

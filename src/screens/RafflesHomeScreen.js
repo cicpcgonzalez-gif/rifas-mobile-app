@@ -13,6 +13,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  Share,
   Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -74,6 +75,19 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   const cardImageWidth = Dimensions.get('window').width - 32;
   const [helpVisible, setHelpVisible] = useState(false);
   const [filter, setFilter] = useState('all');
+
+  const shareRaffle = async (raffle) => {
+    try {
+      const title = raffle?.title || 'Rifa';
+      const description = raffle?.description || '';
+      const appLink = 'megarifas://';
+      await Share.share({
+        message: `${title}\n\n${description}\n\nAbrir en MegaRifas: ${appLink}`
+      });
+    } catch (_e) {
+      // Silenciar
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -252,6 +266,10 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
             const remaining = stats.remaining ?? (total ? Math.max(total - sold, 0) : 0);
             const percentLeft = total ? Math.max(0, Math.min(100, (remaining / total) * 100)) : 0;
             const lowStock = total && percentLeft <= 10;
+
+            const reactionCounts = item.reactionCounts || {};
+            const likeCount = reactionCounts.LIKE ?? 0;
+            const heartCount = reactionCounts.HEART ?? 0;
             
             const gallery = Array.isArray(item.style?.gallery) && item.style.gallery.length
               ? item.style.gallery
@@ -328,13 +346,24 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                 {/* Action Bar */}
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', gap: 16 }}>
-                        <TouchableOpacity>
-                            <Ionicons name="heart-outline" size={26} color="#fff" />
-                        </TouchableOpacity>
-                        <TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => Alert.alert('Reacciones', 'Pronto podrás dar like a las rifas desde aquí.')}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                    >
+                      <Ionicons name="thumbs-up-outline" size={26} color="#fff" />
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{likeCount}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => Alert.alert('Reacciones', 'Pronto podrás enviar corazones a las rifas desde aquí.')}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                    >
+                      <Ionicons name="heart-outline" size={26} color="#fff" />
+                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{heartCount}</Text>
+                    </TouchableOpacity>
+                        <TouchableOpacity onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}>
                             <Ionicons name="chatbubble-outline" size={26} color="#fff" />
                         </TouchableOpacity>
-                        <TouchableOpacity>
+                        <TouchableOpacity onPress={() => shareRaffle(item)}>
                             <Ionicons name="paper-plane-outline" size={26} color="#fff" />
                         </TouchableOpacity>
                     </View>

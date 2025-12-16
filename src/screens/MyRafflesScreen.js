@@ -12,8 +12,22 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { palette } from '../theme';
 import { styles } from '../styles';
-import { QRCodePlaceholder, ProgressBar } from '../components/UI';
+import { ProgressBar } from '../components/UI';
 import { formatTicketNumber } from '../utils';
+
+const formatReceiptDateTime = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '—';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatMoney = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return n.toFixed(2);
+};
 
 export default function MyRafflesScreen({ api, navigation }) {
   const [items, setItems] = useState([]);
@@ -51,113 +65,110 @@ export default function MyRafflesScreen({ api, navigation }) {
     const isWinner = !!item.isWinner;
     const status = isWinner ? 'Ganador' : item.status || 'Activo';
     const statusColor = isWinner ? '#fbbf24' : status === 'approved' ? '#4ade80' : status === 'pending' ? '#fbbf24' : '#94a3b8';
+    const numbers = Array.isArray(item.numbers) ? item.numbers.filter((n) => n !== null && n !== undefined) : [];
+    const qty = numbers.length;
+    const unitPrice = raffle?.price;
+    const totalPrice = Number.isFinite(Number(unitPrice)) ? Number(unitPrice) * qty : null;
+    const serialShort = item.serialNumber ? String(item.serialNumber).slice(-8).toUpperCase() : (item.id ? String(item.id) : '—');
+    const whenLabel = formatReceiptDateTime(item.createdAt);
 
     return (
-      <View style={{ 
-        backgroundColor: '#1e293b', 
-        borderRadius: 16, 
-        marginBottom: 20, 
+      <View style={{
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        marginBottom: 18,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: isWinner ? '#fbbf24' : 'rgba(255,255,255,0.1)',
-        elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
+        borderColor: isWinner ? '#fbbf24' : 'rgba(15, 23, 42, 0.18)',
       }}>
-        {/* --- CABECERA DEL TICKET --- */}
-        <View style={{ padding: 16, paddingBottom: 24 }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+        {/* Encabezado (tipo farmacia) */}
+        <View style={{ padding: 14 }}>
+          <View style={{ alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ color: '#0f172a', fontSize: 18, fontWeight: '900', letterSpacing: 2 }}>MEGARIFAS</Text>
+            <Text style={{ color: 'rgba(15, 23, 42, 0.6)', fontSize: 10, marginTop: 2 }}>{whenLabel}</Text>
+          </View>
+
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
             <View style={{ flex: 1, paddingRight: 10 }}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 4 }}>{raffle.title || 'Rifa'}</Text>
-              <Text style={{ color: '#94a3b8', fontSize: 12 }}>{raffle.description}</Text>
+              <Text style={{ color: '#0f172a', fontSize: 14, fontWeight: '800' }} numberOfLines={2}>{raffle.title || 'Rifa'}</Text>
+              {!!raffle.description && (
+                <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 11, marginTop: 2 }} numberOfLines={2}>{raffle.description}</Text>
+              )}
             </View>
-            <View style={{ 
-              backgroundColor: isWinner ? 'rgba(251, 191, 36, 0.2)' : 'rgba(255,255,255,0.1)', 
-              paddingHorizontal: 10, 
-              paddingVertical: 4, 
-              borderRadius: 20,
+            <View style={{
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 999,
               borderWidth: 1,
-              borderColor: statusColor
+              borderColor: statusColor,
+              backgroundColor: 'rgba(15, 23, 42, 0.04)'
             }}>
-              <Text style={{ color: statusColor, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' }}>{status}</Text>
+              <Text style={{ color: statusColor, fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>{status}</Text>
             </View>
           </View>
 
-          {/* NÚMEROS GRANDES */}
-          <View style={{ backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 12, padding: 12, alignItems: 'center', marginVertical: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }}>
-            <Text style={{ color: '#94a3b8', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Tus Números</Text>
-            <Text style={{ color: isWinner ? '#fbbf24' : '#fff', fontSize: 24, fontWeight: '900', letterSpacing: 1 }}>
-              {Array.isArray(item.numbers)
-                ? item.numbers.map(n => formatTicketNumber(n, raffle?.digits)).join(' • ')
-                : item.numbers
-                ? formatTicketNumber(item.numbers, raffle?.digits)
-                : '—'}
-            </Text>
+          <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(15, 23, 42, 0.10)', marginTop: 10, paddingTop: 10 }}>
+            <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 10, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase' }}>Números</Text>
+
+            {qty > 0 ? (
+              <View style={{ marginTop: 8 }}>
+                {numbers.map((n, idx) => (
+                  <View key={`${n}-${idx}`} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: idx === qty - 1 ? 0 : 1, borderBottomColor: 'rgba(15, 23, 42, 0.06)' }}>
+                    <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace' }}>#{String(idx + 1).padStart(2, '0')}</Text>
+                    <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace', fontWeight: '800' }}>{formatTicketNumber(n, raffle?.digits)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={{ color: 'rgba(15, 23, 42, 0.55)', fontSize: 12, marginTop: 6 }}>—</Text>
+            )}
+          </View>
+
+          <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(15, 23, 42, 0.10)', marginTop: 12, paddingTop: 10 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11 }}>Cantidad</Text>
+              <Text style={{ color: '#0f172a', fontSize: 11, fontWeight: '800' }}>{qty}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11 }}>Precio unitario</Text>
+              <Text style={{ color: '#0f172a', fontSize: 11, fontWeight: '800' }}>{formatMoney(unitPrice)}</Text>
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>TOTAL</Text>
+              <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>{totalPrice === null ? '—' : formatMoney(totalPrice)}</Text>
+            </View>
           </View>
         </View>
 
-        {/* --- SEPARADOR CON MUESCAS --- */}
-        <View style={{ height: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', position: 'relative', marginTop: -10, zIndex: 10 }}>
-           <View style={{ position: 'absolute', left: -10, width: 20, height: 20, borderRadius: 10, backgroundColor: palette.background }} />
-           <View style={{ flex: 1, borderBottomWidth: 1, borderBottomColor: '#334155', borderStyle: 'dashed', marginHorizontal: 16 }} />
-           <View style={{ position: 'absolute', right: -10, width: 20, height: 20, borderRadius: 10, backgroundColor: palette.background }} />
-        </View>
-
-        {/* --- TALÓN DE SEGURIDAD (PIE DEL TICKET) --- */}
-        <View style={{ backgroundColor: '#0f172a', padding: 16, paddingTop: 24 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            {/* INFO SERIAL (IZQUIERDA) */}
-            <View style={{ flex: 1 }}>
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ color: '#64748b', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold' }}>Serial Único</Text>
-                <Text style={{ color: '#cbd5e1', fontFamily: 'monospace', fontSize: 11, letterSpacing: 0.5 }}>
-                  {item.serialNumber ? item.serialNumber.slice(-8).toUpperCase() : 'PENDIENTE'}
-                </Text>
-              </View>
-              <View>
-                <Text style={{ color: '#64748b', fontSize: 9, textTransform: 'uppercase', fontWeight: 'bold' }}>Comprador</Text>
-                <Text style={{ color: '#cbd5e1', fontSize: 11 }} numberOfLines={1}>
-                  {item?.user?.firstName || item?.user?.name || 'Usuario'} {item?.user?.lastName || ''}
-                </Text>
-              </View>
+        {/* Talón / Pie */}
+        <View style={{ backgroundColor: 'rgba(15, 23, 42, 0.04)', padding: 14, borderTopWidth: 1, borderTopColor: 'rgba(15, 23, 42, 0.10)' }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>Serial</Text>
+              <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace', fontWeight: '800' }}>{serialShort}</Text>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.6)', fontSize: 10, marginTop: 6 }}>Conserva este comprobante. No requiere QR.</Text>
             </View>
 
-            {/* QR (DERECHA) */}
-            <View style={{ 
-              backgroundColor: '#fff', 
-              padding: 2, 
-              borderRadius: 4,
-              marginLeft: 12,
-              width: 45,
-              height: 45,
-              justifyContent: 'center',
-              alignItems: 'center',
-              overflow: 'hidden'
-            }}>
-              <View style={{ transform: [{ scale: 0.35 }] }}>
-                <QRCodePlaceholder value={item.serialNumber || `TICKET-${item.id}`} />
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>Progreso</Text>
+              <View style={{ width: 110, marginTop: 6 }}>
+                <ProgressBar progress={progress} color={isWinner ? '#fbbf24' : palette.accent} />
               </View>
             </View>
           </View>
 
-          {/* BARRA DE PROGRESO Y BOTÓN */}
-          <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' }}>
-             <ProgressBar progress={progress} color={isWinner ? '#fbbf24' : palette.accent} />
-             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
-                {raffle && raffle.id ? (
-                  <TouchableOpacity 
-                    onPress={() => navigation.navigate('RaffleDetail', { raffle, ticket: item })}
-                    style={{ flexDirection: 'row', alignItems: 'center' }}
-                  >
-                    <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 13, marginRight: 4 }}>Ver Detalles</Text>
-                    <Ionicons name="chevron-forward" size={14} color={palette.primary} />
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={[styles.muted, { fontSize: 12 }]}>No disponible</Text>
-                )}
-             </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+            {raffle && raffle.id ? (
+              <TouchableOpacity
+                onPress={() => navigation.navigate('RaffleDetail', { raffle, ticket: item })}
+                style={{ flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Text style={{ color: palette.primary, fontWeight: '900', fontSize: 13, marginRight: 4 }}>Ver detalles</Text>
+                <Ionicons name="chevron-forward" size={14} color={palette.primary} />
+              </TouchableOpacity>
+            ) : (
+              <Text style={[styles.muted, { fontSize: 12 }]}>No disponible</Text>
+            )}
           </View>
         </View>
       </View>

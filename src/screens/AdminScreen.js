@@ -38,6 +38,11 @@ const splitCsv = (value) => {
     .filter(Boolean);
 };
 
+const isSuperadminRole = (role) => {
+  const normalized = String(role || '').trim().toLowerCase();
+  return normalized === 'superadmin' || normalized === 'super_admin' || normalized === 'super-admin';
+};
+
 const normalizeRaffle = (raffle) => {
   const safe = raffle && typeof raffle === 'object' ? raffle : null;
   if (!safe) return null;
@@ -149,6 +154,33 @@ class AdminScreenErrorBoundary extends React.Component {
   }
 }
 
+class SectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error) {
+    console.error('AdminScreen section error:', this.props?.label, error);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const message = this.state?.error?.message ? String(this.state.error.message) : String(this.state.error || '');
+    return (
+      <View style={{ padding: 12, borderRadius: 12, backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)' }}>
+        <Text style={{ color: '#fff', fontWeight: '800' }}>Error en sección</Text>
+        <Text style={{ color: '#e2e8f0', marginTop: 6 }}>{String(this.props?.label || '')}</Text>
+        <Text selectable style={{ color: '#cbd5e1', marginTop: 10, fontSize: 11, lineHeight: 14 }}>Detalle: {message}</Text>
+      </View>
+    );
+  }
+}
+
 const normalizeImage = async (asset, { maxWidth = 1024, compress = 0.7 } = {}) => {
   const targetWidth = Math.min(maxWidth, asset?.width || maxWidth);
   const manipResult = await ImageManipulator.manipulateAsync(
@@ -164,6 +196,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const navigation = useNavigation();
   const lastEditHandledRef = useRef(null);
   const [activeSection, setActiveSection] = useState(null);
+  const isSuperadmin = isSuperadminRole(user?.role);
 
   // Handle navigation params for editing
   useFocusEffect(
@@ -260,7 +293,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       { id: 'news', title: 'Novedades', icon: 'newspaper-outline', color: '#60a5fa' },
     ];
     
-    if (user?.role === 'superadmin') {
+    if (isSuperadmin) {
       // Superadmin siempre ve los bloques críticos aunque el backend no mande config
       items.push({ id: 'sa_users', title: 'Usuarios', icon: 'people-outline', color: '#22d3ee', requiresSuperadmin: true });
       items.push({ id: 'sa_tech_support', title: 'Soporte Técnico', icon: 'call-outline', color: '#38bdf8', requiresSuperadmin: true });
@@ -269,17 +302,17 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         items.push({ id: 'sa_audit', title: 'Auditoría', icon: 'receipt-outline', color: '#facc15' });
       }
       if (!modulesConfig || modulesConfig?.superadmin?.branding !== false) {
-        items.push({ id: 'branding', title: 'Branding', icon: 'color-palette-outline', color: '#c084fc' });
+        items.push({ id: 'sa_branding', title: 'Branding', icon: 'color-palette-outline', color: '#c084fc' });
       }
       if (!modulesConfig || modulesConfig?.superadmin?.modules !== false) {
-        items.push({ id: 'modules', title: 'Módulos', icon: 'layers-outline', color: '#4ade80' });
+        items.push({ id: 'sa_modules', title: 'Módulos', icon: 'layers-outline', color: '#4ade80' });
       }
       items.push({ id: 'sa_mail', title: 'Logs de Correo', icon: 'mail-open-outline', color: '#f472b6', requiresSuperadmin: true });
       // items.push({ id: 'sa_actions', title: 'Acciones Críticas', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true }); // ELIMINADO (Fusionado con Auditoría)
     }
     
     return items;
-  }, [user, modulesConfig]);
+  }, [isSuperadmin, modulesConfig]);
 
   const [payments, setPayments] = useState([]);
   const [loadingPayments, setLoadingPayments] = useState(false);
@@ -300,7 +333,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' });
-  const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '1', paymentMethods: ['mobile_payment'] });
+  const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
   const [showLotteryModal, setShowLotteryModal] = useState(false);
@@ -944,12 +977,14 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const updateStyle = async () => {
     if (!styleForm.raffleId) return Alert.alert('Falta rifa', 'Selecciona una rifa.');
     setStyleLoading(true);
-    const { res, data } = await api(`/raffles/${styleForm.raffleId}/style`, {
+    const { raffleId, ...styleData } = styleForm;
+    const { res, data } = await api(`/admin/raffles/${styleForm.raffleId}`, {
       method: 'PATCH',
-      body: JSON.stringify(styleForm)
+      body: JSON.stringify({ style: styleData })
     });
     if (res.ok) {
       Alert.alert('Estilo actualizado');
+      loadRaffles();
     } else {
       Alert.alert('Ups', data?.error || 'No se pudo actualizar el estilo.');
     }
@@ -1101,7 +1136,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   };
 
   const resetRaffleForm = () => {
-    setRaffleForm({ id: null, title: '', price: '', description: '', totalTickets: '', startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '1', paymentMethods: ['mobile_payment'] });
+    setRaffleForm({ id: null, title: '', price: '', description: '', totalTickets: '', startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
     setRaffleErrors({});
   };
 
@@ -1138,7 +1173,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       paymentMethods: raffleForm.paymentMethods
     };
     setSavingRaffle(true);
-    const endpoint = raffleForm.id ? `/admin/raffles/${raffleForm.id}` : '/raffles';
+    const isCreate = !raffleForm.id;
+    const endpoint = raffleForm.id ? `/admin/raffles/${raffleForm.id}` : '/admin/raffles';
     const method = raffleForm.id ? 'PATCH' : 'POST';
     const { res, data } = await api(endpoint, { method, body: JSON.stringify(payload) });
     
@@ -1146,6 +1182,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       // Save style if we have style data
       const raffleId = raffleForm.id || data.id || data.raffle?.id;
       let styleError = null;
+      let activationError = null;
       
       if (raffleId) {
         const stylePayload = {
@@ -1163,10 +1200,22 @@ export default function AdminScreen({ api, user, modulesConfig }) {
           styleError = styleRes.data?.error || 'Error al guardar las imágenes.';
           console.log('Style upload error:', styleError);
         }
+
+        // Para que la rifa se vea en el listado público (/raffles), activar al crear.
+        if (isCreate) {
+          const actRes = await api(`/admin/raffles/${raffleId}/activate`, { method: 'POST' });
+          if (!actRes.res.ok) {
+            activationError = actRes.data?.error || 'No se pudo activar la rifa.';
+            console.log('Activation error:', activationError);
+          }
+        }
       }
 
-      if (styleError) {
-        Alert.alert('Rifa guardada con advertencia', `La rifa se guardó, pero hubo un problema con las imágenes: ${styleError}\nIntenta subir imágenes más ligeras o editar la rifa nuevamente.`);
+      if (styleError || activationError) {
+        const parts = [];
+        if (styleError) parts.push(`Imágenes: ${styleError}`);
+        if (activationError) parts.push(`Publicación: ${activationError}`);
+        Alert.alert('Rifa guardada con advertencia', `La rifa se guardó, pero hubo un problema:\n\n- ${parts.join('\n- ')}\n\nPuedes intentar editar la rifa nuevamente.`);
       } else {
         Alert.alert('Listo', raffleForm.id ? 'Rifa actualizada correctamente.' : 'Rifa creada correctamente.', [
           { text: 'OK', onPress: () => {
@@ -1221,7 +1270,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   };
 
   const deleteAnnouncement = async (id) => {
-    if (user?.role !== 'superadmin') return Alert.alert('Acceso denegado', 'Solo el superadmin puede eliminar anuncios.');
+    if (!isSuperadmin) return Alert.alert('Acceso denegado', 'Solo el superadmin puede eliminar anuncios.');
     Alert.alert('Eliminar', '¿Eliminar este anuncio?', [
       { text: 'Cancelar' },
       { text: 'Eliminar', onPress: async () => {
@@ -1347,7 +1396,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   };
 
   const deleteRaffle = async (raffleId) => {
-    if (user?.role !== 'superadmin') return Alert.alert('Acceso denegado', 'Solo el superadmin puede eliminar rifas.');
+    if (!isSuperadmin) return Alert.alert('Acceso denegado', 'Solo el superadmin puede eliminar rifas.');
     
     Alert.alert(
       'Eliminar Rifa',
@@ -1359,7 +1408,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
           style: 'destructive',
           onPress: async () => {
             setSavingRaffle(true);
-            const { res, data } = await api(`/raffles/${raffleId}`, { method: 'DELETE' });
+            const { res, data } = await api(`/admin/raffles/${raffleId}`, { method: 'DELETE' });
             if (res.ok) {
               Alert.alert('Eliminada', 'La rifa ha sido eliminada.');
               loadRaffles();
@@ -1379,7 +1428,14 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       <AdminScreenErrorBoundary>
         <SafeAreaView style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={[styles.title, { marginBottom: 0 }]}>{user?.role === 'superadmin' ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+              {activeSection && activeSection !== 'sa_users' ? (
+                <TouchableOpacity onPress={() => setActiveSection(null)} style={{ padding: 6, marginLeft: -6 }}>
+                  <Ionicons name="arrow-back" size={22} color="#fff" />
+                </TouchableOpacity>
+              ) : null}
+              <Text style={[styles.title, { marginBottom: 0 }]}>{isSuperadmin ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
+            </View>
             {techSupport && (
               <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
                 <Ionicons name="help-circle-outline" size={28} color="#fff" />
@@ -1869,7 +1925,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                       key={item.id}
                       style={{ width: '48%', backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, borderRadius: 12, marginBottom: 8, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}
                       onPress={() => {
-                        if (item.requiresSuperadmin && user?.role !== 'superadmin') {
+                        if (item.requiresSuperadmin && !isSuperadmin) {
                           Alert.alert('Solo Superadmin', 'Necesitas permisos de superadmin para esta sección.');
                           return;
                         }
@@ -1890,21 +1946,23 @@ export default function AdminScreen({ api, user, modulesConfig }) {
           
           {activeSection === 'raffles' && (
             <View style={styles.card}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Crear o Editar Rifa</Text>
-              </View>
+              <SectionErrorBoundary label="Gestión de Rifas: formulario">
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                      <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Crear o Editar Rifa</Text>
+                  </View>
 
-              <Text style={styles.section}>Datos Generales</Text>
-              <View style={{ marginBottom: 10 }}>
-                <TextInput 
-                  style={[styles.input, raffleErrors.title && { borderColor: '#ef4444', borderWidth: 1 }]} 
-                  placeholder="Titulo" 
-                  value={raffleForm.title} 
-                  onChangeText={(v) => setRaffleForm((s) => ({ ...s, title: v }))} 
-                />
-                {raffleErrors.title && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4 }}>* Requerido</Text>}
-              </View>
+                  <Text style={styles.section}>Datos Generales</Text>
+                  <View style={{ marginBottom: 10 }}>
+                    <TextInput 
+                      style={[styles.input, raffleErrors.title && { borderColor: '#ef4444', borderWidth: 1 }]} 
+                      placeholder="Titulo" 
+                      value={raffleForm.title} 
+                      onChangeText={(v) => setRaffleForm((s) => ({ ...s, title: v }))} 
+                    />
+                    {raffleErrors.title && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4 }}>* Requerido</Text>}
+                  </View>
 
               <View style={{ flexDirection: 'row', gap: 10, marginBottom: 10 }}>
                 <View style={{ flex: 1 }}>
@@ -2195,108 +2253,115 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 );
               })()}
 
-              <Text style={[styles.section, { marginTop: 12 }]}>Rifas Existentes</Text>
-              {(Array.isArray(raffles) ? raffles : []).filter((r) => r).map((r, idx) => {
-                const sold = Number(r?.soldTickets) || 0;
-                const totalRaw = Number(r?.totalTickets);
-                const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : 100;
-                const percent = total > 0 ? (sold / total) * 100 : 0;
-                const boost = r?.style?.boost;
-                const boostExp = boost?.expiresAt ? Date.parse(boost.expiresAt) : 0;
-                const boostActive = boostExp && boostExp > Date.now();
-                const status = String(r?.status || 'active').toLowerCase();
-                const statusLabel = status === 'draft' ? 'BORRADOR' : status === 'closed' ? 'CERRADA' : 'ACTIVA';
-                
-                return (
-                <View key={String(r?.id ?? idx)} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: '#fff', fontWeight: 'bold' }}>{String(r?.title ?? '')}</Text>
-                      <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {String(r?.id ?? '')} • {statusLabel}</Text>
-                      {boostActive && (
-                        <Text style={{ color: '#fbbf24', fontSize: 12, marginTop: 2 }}>
-                          Destacada hasta: {new Date(boostExp).toLocaleString()}
-                        </Text>
-                      )}
-                      <View style={{ marginTop: 6 }}>
-                        <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
-                        <Text style={{ color: '#cbd5e1', fontSize: 10 }}>Vendidos: {sold}/{total} ({percent.toFixed(1)}%)</Text>
-                      </View>
-                    </View>
-                    <View style={{ flexDirection: 'row', gap: 8, marginLeft: 8 }}>
-                      <TouchableOpacity onPress={() => {
-                        setRaffleForm({
-                          id: r.id,
-                          title: String(r?.title ?? ''),
-                          price: String(r.price),
-                          description: r.description || '',
-                          totalTickets: String(r.totalTickets),
-                          startDate: r.startDate ? r.startDate.split('T')[0] : '',
-                          endDate: r.endDate ? r.endDate.split('T')[0] : '',
-                          securityCode: r.securityCode || '',
-                          lottery: r.lottery || '',
-                          instantWins: formatInstantWinsForInput(r.instantWins),
-                          terms: r.terms || '',
-                          digits: r.digits || 4,
-                          minTickets: String(r.minTickets || '1'),
-                          paymentMethods: (Array.isArray(r.paymentMethods) && r.paymentMethods.length) ? r.paymentMethods : ['mobile_payment']
-                        });
-                        // Pre-load style form as well
-                        setStyleForm({
-                          raffleId: r.id,
-                          bannerImage: r.style?.bannerImage || '',
-                          gallery: ensureArray(r.style?.gallery),
-                          themeColor: r.style?.themeColor || '#2563eb',
-                          whatsapp: r.style?.whatsapp || '',
-                          instagram: r.style?.instagram || ''
-                        });
-                      }} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8 }}>
-                        <Ionicons name="create-outline" size={20} color="#fff" />
-                      </TouchableOpacity>
+                </>
+              </SectionErrorBoundary>
+
+              <SectionErrorBoundary label="Gestión de Rifas: listado">
+                <>
+                  <Text style={[styles.section, { marginTop: 12 }]}>Rifas Existentes</Text>
+                  {(Array.isArray(raffles) ? raffles : []).filter((r) => r).map((r, idx) => {
+                      const sold = Number(r?.soldTickets) || 0;
+                      const totalRaw = Number(r?.totalTickets);
+                      const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : 100;
+                      const percent = total > 0 ? (sold / total) * 100 : 0;
+                      const boost = r?.style?.boost;
+                      const boostExp = boost?.expiresAt ? Date.parse(boost.expiresAt) : 0;
+                      const boostActive = Number.isFinite(boostExp) && boostExp > Date.now();
+                      const status = String(r?.status || 'active').toLowerCase();
+                      const statusLabel = status === 'draft' ? 'BORRADOR' : status === 'closed' ? 'CERRADA' : 'ACTIVA';
                       
-                      {status !== 'closed' && (
-                        <TouchableOpacity onPress={() => openWinnerModal(r.id)} style={{ padding: 8, backgroundColor: 'rgba(251, 191, 36, 0.2)', borderRadius: 8 }}>
-                          <Ionicons name="trophy-outline" size={20} color="#fbbf24" />
-                        </TouchableOpacity>
-                      )}
+                      return (
+                      <View key={String(r?.id ?? idx)} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 8 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#fff', fontWeight: 'bold' }}>{String(r?.title ?? '')}</Text>
+                            <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {String(r?.id ?? '')} • {statusLabel}</Text>
+                            {boostActive && (
+                              <Text style={{ color: '#fbbf24', fontSize: 12, marginTop: 2 }}>
+                                Destacada hasta: {new Date(boostExp).toLocaleString()}
+                              </Text>
+                            )}
+                            <View style={{ marginTop: 6 }}>
+                              <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
+                              <Text style={{ color: '#cbd5e1', fontSize: 10 }}>Vendidos: {sold}/{total} ({percent.toFixed(1)}%)</Text>
+                            </View>
+                          </View>
+                          <View style={{ flexDirection: 'row', gap: 8, marginLeft: 8 }}>
+                            <TouchableOpacity onPress={() => {
+                              setRaffleForm({
+                                id: r.id,
+                                title: String(r?.title ?? ''),
+                                price: String(r.price),
+                                description: r.description || '',
+                                totalTickets: String(r.totalTickets),
+                                startDate: r.startDate ? r.startDate.split('T')[0] : '',
+                                endDate: r.endDate ? r.endDate.split('T')[0] : '',
+                                securityCode: r.securityCode || '',
+                                lottery: r.lottery || '',
+                                instantWins: formatInstantWinsForInput(r.instantWins),
+                                terms: r.terms || '',
+                                digits: r.digits || 4,
+                                minTickets: String(r.minTickets || '1'),
+                                paymentMethods: (Array.isArray(r.paymentMethods) && r.paymentMethods.length) ? r.paymentMethods : ['mobile_payment']
+                              });
+                              // Pre-load style form as well
+                              setStyleForm({
+                                raffleId: r.id,
+                                bannerImage: r.style?.bannerImage || '',
+                                gallery: ensureArray(r.style?.gallery),
+                                themeColor: r.style?.themeColor || '#2563eb',
+                                whatsapp: r.style?.whatsapp || '',
+                                instagram: r.style?.instagram || ''
+                              });
+                            }} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8 }}>
+                              <Ionicons name="create-outline" size={20} color="#fff" />
+                            </TouchableOpacity>
+                            
+                            {status !== 'closed' && (
+                              <TouchableOpacity onPress={() => openWinnerModal(r.id)} style={{ padding: 8, backgroundColor: 'rgba(251, 191, 36, 0.2)', borderRadius: 8 }}>
+                                <Ionicons name="trophy-outline" size={20} color="#fbbf24" />
+                              </TouchableOpacity>
+                            )}
 
-                      {status === 'draft' && (
-                        <TouchableOpacity
-                          onPress={() => activateRaffle(r.id)}
-                          disabled={activatingRaffleId === r.id}
-                          style={{
-                            padding: 8,
-                            backgroundColor: 'rgba(34, 197, 94, 0.18)',
-                            borderRadius: 8,
-                            opacity: activatingRaffleId === r.id ? 0.6 : 1
-                          }}
-                        >
-                          <Ionicons name="play-outline" size={20} color="#22c55e" />
-                        </TouchableOpacity>
-                      )}
+                            {status === 'draft' && (
+                              <TouchableOpacity
+                                onPress={() => activateRaffle(r.id)}
+                                disabled={activatingRaffleId === r.id}
+                                style={{
+                                  padding: 8,
+                                  backgroundColor: 'rgba(34, 197, 94, 0.18)',
+                                  borderRadius: 8,
+                                  opacity: activatingRaffleId === r.id ? 0.6 : 1
+                                }}
+                              >
+                                <Ionicons name="play-outline" size={20} color="#22c55e" />
+                              </TouchableOpacity>
+                            )}
 
-                      <TouchableOpacity
-                        onPress={() => boostRaffle(r.id)}
-                        disabled={boostingRaffleId === r.id || status !== 'active'}
-                        style={{
-                          padding: 8,
-                          backgroundColor: boostActive ? 'rgba(251, 191, 36, 0.25)' : 'rgba(255,255,255,0.1)',
-                          borderRadius: 8,
-                          opacity: boostingRaffleId === r.id || status !== 'active' ? 0.6 : 1
-                        }}
-                      >
-                        <Ionicons name={boostActive ? 'star' : 'star-outline'} size={20} color={boostActive ? '#fbbf24' : '#fff'} />
-                      </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => boostRaffle(r.id)}
+                              disabled={boostingRaffleId === r.id || status !== 'active'}
+                              style={{
+                                padding: 8,
+                                backgroundColor: boostActive ? 'rgba(251, 191, 36, 0.25)' : 'rgba(255,255,255,0.1)',
+                                borderRadius: 8,
+                                opacity: boostingRaffleId === r.id || status !== 'active' ? 0.6 : 1
+                              }}
+                            >
+                              <Ionicons name={boostActive ? 'star' : 'star-outline'} size={20} color={boostActive ? '#fbbf24' : '#fff'} />
+                            </TouchableOpacity>
 
-                      {user?.role === 'superadmin' && (
-                        <TouchableOpacity onPress={() => deleteRaffle(r.id)} style={{ padding: 8, backgroundColor: 'rgba(248, 113, 113, 0.2)', borderRadius: 8 }}>
-                          <Ionicons name="trash-outline" size={20} color="#f87171" />
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                </View>
-              )})}
+                            {isSuperadmin && (
+                              <TouchableOpacity onPress={() => deleteRaffle(r.id)} style={{ padding: 8, backgroundColor: 'rgba(248, 113, 113, 0.2)', borderRadius: 8 }}>
+                                <Ionicons name="trash-outline" size={20} color="#f87171" />
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        </View>
+                      </View>
+                      )})}
+                  </>
+              </SectionErrorBoundary>
             </View>
           )}
 

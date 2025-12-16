@@ -49,7 +49,7 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
-            const { res, data } = await api(`/raffles/${id}`, { method: 'DELETE' });
+            const { res, data } = await api(`/admin/raffles/${id}`, { method: 'DELETE' });
             if (res.ok) {
               Alert.alert('Éxito', 'Rifa eliminada.');
               load();
@@ -101,6 +101,17 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.itemTitle, { color: '#fff' }]}>{item.title}</Text>
                       <Text style={styles.muted}>{item.status === 'closed' ? 'CERRADA' : 'ACTIVA'} • Tickets: {item.soldTickets || 0}/{item.totalTickets || 0}</Text>
+
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="thumbs-up-outline" size={16} color={palette.muted} />
+                          <Text style={styles.muted}>{item.reactionCounts?.LIKE ?? 0}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Ionicons name="heart-outline" size={16} color={palette.muted} />
+                          <Text style={styles.muted}>{item.reactionCounts?.HEART ?? 0}</Text>
+                        </View>
+                      </View>
                     </View>
                     <View style={{ flexDirection: 'row', gap: 10 }}>
                       <TouchableOpacity onPress={() => handleEdit(item)} style={{ padding: 8, backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: 8 }}>
