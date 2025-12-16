@@ -52,21 +52,21 @@ export default function TabsNavigator({ api, user, onUserUpdate, modulesConfig, 
             <Ionicons name="log-out-outline" size={20} color="#ef4444" />
           </TouchableOpacity>
         )}}>
-          {() => <RafflesStack api={api} user={user} />}
+          {(props) => <RafflesStack {...props} api={api} user={user} />}
         </Tabs.Screen>
       )}
       {cfg?.user?.raffles !== false && (
         <Tabs.Screen name="Tickets">
-          {() => <MyRafflesScreen api={api} user={user} />}
+          {(props) => <MyRafflesScreen {...props} api={api} user={user} />}
         </Tabs.Screen>
       )}
       {cfg?.user?.wallet !== false && (
         <Tabs.Screen name="Wallet">
-          {() => <WalletScreen api={api} />}
+          {(props) => <WalletScreen {...props} api={api} />}
         </Tabs.Screen>
       )}
       <Tabs.Screen name="Ganadores">
-        {() => <WinnersScreen api={api} />}
+        {(props) => <WinnersScreen {...props} api={api} />}
       </Tabs.Screen>
       {cfg?.user?.profile !== false && (
         <Tabs.Screen name="Perfil">
@@ -75,7 +75,7 @@ export default function TabsNavigator({ api, user, onUserUpdate, modulesConfig, 
       )}
       {(user?.role === 'admin' || user?.role === 'organizer' || user?.role === 'superadmin') && cfg?.admin?.raffles !== false && (
         <Tabs.Screen name={user?.role === 'superadmin' ? 'Superadmin' : 'Admin'}>
-          {() => <AdminScreen api={api} user={user} modulesConfig={modulesConfig} />}
+          {(props) => <AdminScreen {...props} api={api} user={user} modulesConfig={modulesConfig} />}
         </Tabs.Screen>
       )}
     </Tabs.Navigator>
