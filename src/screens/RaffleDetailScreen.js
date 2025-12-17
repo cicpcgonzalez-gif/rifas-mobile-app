@@ -19,7 +19,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { palette } from '../theme';
 import { styles } from '../styles';
 import { FilledButton, OutlineButton } from '../components/UI';
-import { formatTicketNumber } from '../utils';
+import { formatTicketNumber, formatMoneyVES } from '../utils';
 import PublicProfileModal from '../components/PublicProfileModal';
 
 const { width } = Dimensions.get('window');
@@ -39,6 +39,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const numbersAnim = useRef(new Animated.Value(0)).current;
   const [supportVisible, setSupportVisible] = useState(false);
   const [bankDetails, setBankDetails] = useState(null);
+  const [sellerPaymentMethods, setSellerPaymentMethods] = useState([]);
   const stats = current?.stats || {};
   const style = current?.style || {};
   const safeGallery = Array.isArray(style?.gallery)
@@ -75,12 +76,14 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   }, [current?.id, api]);
 
   useEffect(() => {
-    if (api) {
-      api('/admin/bank-details').then(({ res, data }) => {
-        if (res.ok && data.bankDetails) setBankDetails(data.bankDetails);
-      });
-    }
-  }, [api]);
+    if (!api || !current?.id) return;
+    api(`/raffles/${current.id}/payment-details`).then(({ res, data }) => {
+      if (!res.ok) return;
+      const methods = Array.isArray(data?.paymentMethods) ? data.paymentMethods : [];
+      setSellerPaymentMethods(methods);
+      if (data?.bankDetails) setBankDetails(data.bankDetails);
+    });
+  }, [api, current?.id]);
 
   if (!current || !current.id) {
     return (
@@ -238,7 +241,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
           <View style={{ marginBottom: 8 }}>
             <Text style={styles.muted}>
-              Precio VES {current.price} • Disponibles {remaining} / {totalTickets || '∞'} ({percentLeft.toFixed(0)}%)
+              Precio {formatMoneyVES(current.price, { decimals: 0 })} • Disponibles {remaining} / {totalTickets || '∞'} ({percentLeft.toFixed(0)}%)
             </Text>
             <View style={{ height: 10, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 5, overflow: 'hidden', marginTop: 6 }}>
               <View style={{ width: `${percentLeft}%`, height: '100%', backgroundColor: themeColor }} />
@@ -271,7 +274,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           )}
         </View>
 
-        {(!style.paymentMethods || (Array.isArray(style.paymentMethods) && style.paymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m)))) && (
+          {(!sellerPaymentMethods.length || sellerPaymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m))) && (
         <View style={styles.card}>
           <View style={styles.sectionRow}>
             <Text style={[styles.section, { color: themeColor }]}>Pago manual guiado</Text>
@@ -281,6 +284,19 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             </TouchableOpacity>
           </View>
           <Text style={styles.muted}>2 pasos: completa datos y sube comprobante. Asignamos números aleatorios 1-10000 tras validar.</Text>
+
+          {sellerPaymentMethods.length ? (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Métodos aceptados:</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {sellerPaymentMethods.map((m) => (
+                  <View key={String(m)} style={[styles.pill, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>{String(m)}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
           
           {bankDetails && (
             <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 8, marginVertical: 8 }}>

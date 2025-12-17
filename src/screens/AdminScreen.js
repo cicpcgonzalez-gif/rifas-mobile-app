@@ -264,7 +264,6 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [metricsByState, setMetricsByState] = useState([]);
   const [metricsTop, setMetricsTop] = useState([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
 
   const [userSearch, setUserSearch] = useState('');
   const [filteredUsers, setFilteredUsers] = useState([]);
@@ -332,7 +331,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [verifierResult, setVerifierResult] = useState(null);
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' });
+  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '', q: '' });
+  const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
@@ -425,7 +425,11 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       if (ticketFilters.raffleId === lotteryCheck.raffleId && tickets.length > 0) {
         foundTicket = tickets.find(t => String(t.number) === String(lotteryCheck.number));
       } else {
-        const { res, data } = await api(`/admin/tickets?raffleId=${lotteryCheck.raffleId}`);
+        const params = new URLSearchParams();
+        params.append('raffleId', String(lotteryCheck.raffleId));
+        params.append('number', String(lotteryCheck.number));
+        params.append('take', '5');
+        const { res, data } = await api(`/admin/tickets?${params.toString()}`);
         if (res.ok && Array.isArray(data)) {
            foundTicket = data?.find(t => String(t.number) === String(lotteryCheck.number));
         }
@@ -654,11 +658,36 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (ticketFilters.phone) params.append('phone', ticketFilters.phone);
     if (ticketFilters.cedula) params.append('cedula', ticketFilters.cedula);
     if (ticketFilters.email) params.append('email', ticketFilters.email);
+    if (ticketFilters.q) params.append('q', ticketFilters.q);
+    params.append('take', '200');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`);
     if (res.ok && Array.isArray(data)) setTickets(data);
     setTicketsLoading(false);
   }, [api, ticketFilters]);
+
+  const activeRafflesForTickets = useMemo(() => {
+    const list = Array.isArray(raffles) ? raffles : [];
+    return list
+      .filter((r) => {
+        const st = String(r?.status || 'active').toLowerCase();
+        return st === 'active';
+      })
+      .sort((a, b) => {
+        const ad = a?.activatedAt || a?.createdAt;
+        const bd = b?.activatedAt || b?.createdAt;
+        return new Date(bd || 0).getTime() - new Date(ad || 0).getTime();
+      });
+  }, [raffles]);
+
+  const selectedTicketRaffleLabel = useMemo(() => {
+    const id = String(ticketFilters?.raffleId || '').trim();
+    if (!id) return 'Todas las rifas activas';
+    const found = activeRafflesForTickets.find((r) => String(r?.id) === id);
+    if (!found) return `Rifa #${id}`;
+    const title = String(found.title || '').trim();
+    return title ? `${title} (#${found.id})` : `Rifa #${found.id}`;
+  }, [ticketFilters?.raffleId, activeRafflesForTickets]);
 
   const verifyQuickTicket = useCallback(async () => {
     const input = String(verifierInput || '').trim();
@@ -668,11 +697,18 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     setVerifierResult(null);
 
     try {
-      // 1) Intentar verificación exacta por serial (admin-only) para traer datos del comprador.
-      const { res, data } = await api(`/admin/verify-ticket/${encodeURIComponent(input)}`);
-      if (res.ok && data?.valid && data?.ticket) {
-        setVerifierResult({ status: 'found', ticket: data.ticket });
-        return;
+      // 1) Verificación remota (soporta serial, número, email, cédula, nombre)
+      const { res, data } = await api(`/admin/verify-ticket/${encodeURIComponent(input)}?take=200`);
+      if (res.ok && data?.valid) {
+        const matches = Array.isArray(data?.matches)
+          ? data.matches
+          : data?.ticket
+            ? [data.ticket]
+            : [];
+        if (matches.length) {
+          setVerifierResult({ status: 'found', matches });
+          return;
+        }
       }
 
       // 2) Fallback: si el input es número, intentar encontrarlo en la lista cargada.
@@ -684,14 +720,21 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         // Si tenemos serial, volvemos a consultar para obtener comprador desencriptado.
         const serial = localFound.serialNumber;
         if (serial) {
-          const remote = await api(`/admin/verify-ticket/${encodeURIComponent(String(serial))}`);
-          if (remote.res.ok && remote.data?.valid && remote.data?.ticket) {
-            setVerifierResult({ status: 'found', ticket: remote.data.ticket });
-            return;
+          const remote = await api(`/admin/verify-ticket/${encodeURIComponent(String(serial))}?take=200`);
+          if (remote.res.ok && remote.data?.valid) {
+            const matches = Array.isArray(remote.data?.matches)
+              ? remote.data.matches
+              : remote.data?.ticket
+                ? [remote.data.ticket]
+                : [];
+            if (matches.length) {
+              setVerifierResult({ status: 'found', matches });
+              return;
+            }
           }
         }
 
-        setVerifierResult({ status: 'found', ticket: localFound });
+        setVerifierResult({ status: 'found', matches: [localFound] });
         return;
       }
 
@@ -1721,24 +1764,42 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                         <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: verifierResult.status === 'found' ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: verifierResult.status === 'found' ? '#4ade80' : '#f87171' }}>
                             {verifierResult.status === 'found' ? (
                             <>
-                                <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡TICKET VÁLIDO!</Text>
-                                {(() => {
-                                  const t = verifierResult.ticket || {};
-                                  const buyer = t.buyer || t.user || {};
-                                  const buyerName = buyer.firstName || buyer.name || t.holder || 'Desconocido';
-                                  const buyerEmail = buyer.email || '—';
-                                  const buyerPhone = buyer.phone || buyer.cedula || '—';
-                                  const raffleTitle = t.raffle?.title || t.raffle || t.raffleTitle || '—';
-                                  return (
-                                    <>
-                                      <Text style={{ color: '#fff', textAlign: 'center', marginTop: 4 }}>Comprador: {buyerName}</Text>
-                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Email: {buyerEmail}</Text>
-                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Tel/Cédula: {buyerPhone}</Text>
-                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Rifa: {raffleTitle}</Text>
-                                      <Text style={{ color: '#cbd5e1', textAlign: 'center' }}>Estado: {(t.status || 'unknown').toUpperCase()}</Text>
-                                    </>
-                                  );
-                                })()}
+                                <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡COINCIDENCIAS ENCONTRADAS!</Text>
+                                <Text style={{ color: '#cbd5e1', textAlign: 'center', marginTop: 4, fontSize: 12 }}>
+                                  {Array.isArray(verifierResult.matches) ? verifierResult.matches.length : 1} resultado(s)
+                                </Text>
+
+                                <View style={{ marginTop: 10, gap: 10 }}>
+                                  {(Array.isArray(verifierResult.matches) ? verifierResult.matches : []).map((t, idx) => {
+                                    const buyer = t?.buyer || t?.user || {};
+                                    const seller = t?.seller || {};
+                                    const buyerName = buyer.firstName || buyer.name || t.holder || 'Desconocido';
+                                    const buyerEmail = buyer.email || '—';
+                                    const buyerPhone = buyer.phone || buyer.cedula || '—';
+                                    const raffleTitle = t.raffle?.title || t.raffle || t.raffleTitle || '—';
+                                    const sellerName = seller.name || seller.email || '—';
+                                    const createdAt = t.createdAt ? new Date(t.createdAt).toLocaleString() : '—';
+                                    const serial = t.serialNumber || t.serial || '—';
+                                    const numLabel = t.number != null ? `#${formatTicketNumber(t.number)}` : '—';
+
+                                    return (
+                                      <View key={`${serial}-${idx}`} style={{ padding: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                                        <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>{numLabel}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 2 }}>Serial: {serial}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Fecha/Hora: {createdAt}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Rifa: {raffleTitle}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Vendedor: {sellerName}</Text>
+                                        <View style={{ marginTop: 8 }}>
+                                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>Comprador</Text>
+                                          <Text style={{ color: '#fff', textAlign: 'center', marginTop: 2 }}>{buyerName}</Text>
+                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Email: {buyerEmail}</Text>
+                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Tel/Cédula: {buyerPhone}</Text>
+                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Estado: {(t.status || 'unknown').toUpperCase()}</Text>
+                                        </View>
+                                      </View>
+                                    );
+                                  })}
+                                </View>
                             </>
                             ) : (
                             <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>NO ENCONTRADO</Text>
@@ -1747,12 +1808,103 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                         )}
                     </View>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={ticketFilters.raffleId} onChangeText={(v) => setTicketFilters(s => ({ ...s, raffleId: v }))} keyboardType="numeric" />
+                        <TouchableOpacity
+                          onPress={() => setRafflePickerVisible(true)}
+                          style={[
+                            styles.input,
+                            {
+                              flexGrow: 1,
+                              flexBasis: '45%',
+                              marginBottom: 0,
+                              justifyContent: 'center'
+                            }
+                          ]}
+                        >
+                          <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Rifa (activa)</Text>
+                          <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>
+                            {selectedTicketRaffleLabel}
+                          </Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() => setTicketFilters((s) => ({ ...s, raffleId: '' }))}
+                          style={[
+                            styles.input,
+                            {
+                              flexGrow: 1,
+                              flexBasis: '45%',
+                              marginBottom: 0,
+                              justifyContent: 'center',
+                              alignItems: 'center'
+                            }
+                          ]}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '800' }}>Limpiar rifa</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Ver todas</Text>
+                        </TouchableOpacity>
+
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={ticketFilters.reference} onChangeText={(v) => setTicketFilters(s => ({ ...s, reference: v }))} />
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Teléfono" value={ticketFilters.phone} onChangeText={(v) => setTicketFilters(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Cédula" value={ticketFilters.cedula} onChangeText={(v) => setTicketFilters(s => ({ ...s, cedula: v }))} keyboardType="numeric" />
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Email" value={ticketFilters.email} onChangeText={(v) => setTicketFilters(s => ({ ...s, email: v }))} autoCapitalize="none" />
+                        <TextInput
+                          style={[styles.input, { flexGrow: 1, flexBasis: '100%', marginBottom: 0 }]}
+                          placeholder="Buscar (serial/#/nombre/cédula/email)"
+                          value={ticketFilters.q}
+                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, q: v }))}
+                          autoCapitalize="none"
+                        />
                     </View>
+
+                    <Modal visible={rafflePickerVisible} transparent animationType="fade">
+                      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 16 }}>
+                        <View style={{ backgroundColor: '#0b1224', borderRadius: 16, padding: 14, maxHeight: '80%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center' }}>Selecciona una rifa activa</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>Esto llena el filtro automáticamente</Text>
+
+                          <ScrollView style={{ marginTop: 12 }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setTicketFilters((s) => ({ ...s, raffleId: '' }));
+                                setRafflePickerVisible(false);
+                              }}
+                              style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 10 }}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>Todas las rifas activas</Text>
+                            </TouchableOpacity>
+
+                            {activeRafflesForTickets.map((r) => (
+                              <TouchableOpacity
+                                key={String(r.id)}
+                                onPress={() => {
+                                  setTicketFilters((s) => ({ ...s, raffleId: String(r.id) }));
+                                  setRafflePickerVisible(false);
+                                }}
+                                style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', marginBottom: 10 }}
+                              >
+                                <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={2}>{String(r.title || `Rifa #${r.id}`)}</Text>
+                                <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 6 }}>#{r.id}</Text>
+                              </TouchableOpacity>
+                            ))}
+
+                            {!activeRafflesForTickets.length ? (
+                              <View style={{ paddingVertical: 18 }}>
+                                <Text style={{ color: '#94a3b8', textAlign: 'center' }}>No hay rifas activas para mostrar.</Text>
+                              </View>
+                            ) : null}
+                          </ScrollView>
+
+                          <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                            <TouchableOpacity
+                              onPress={() => setRafflePickerVisible(false)}
+                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    </Modal>
 
                     <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
                         {[
@@ -1777,7 +1929,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                        onPress={() => { setTicketFilters({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '' }); setTimeout(loadTickets, 10); }}
+                        onPress={() => { setTicketFilters({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '', q: '' }); setTimeout(loadTickets, 10); }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
                         >
                         <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
@@ -1818,7 +1970,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                           <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '700' }}>{p.status}</Text>
                         </View>
                       </View>
-                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifa ID: {p.raffleId} • Monto: ${Number(p.amount || 0).toFixed(2)}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifa ID: {p.raffleId} • Monto: Bs. {Number(p.amount || 0).toFixed(2)}</Text>
                       <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>Creado: {p.createdAt ? new Date(p.createdAt).toLocaleString() : '—'}</Text>
                       <View style={{ marginTop: 8 }}>
                         <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Comprador</Text>
@@ -2475,9 +2627,9 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                       {[{ label: 'Participantes', value: metricsSummary.participants },
                         { label: 'Tickets vendidos', value: metricsSummary.ticketsSold },
                         { label: 'Pendientes', value: metricsSummary.pendingPayments },
-                        { label: 'Recaudado', value: `$${(metricsSummary.totalRevenue || 0).toFixed(2)}` },
+                        { label: 'Recaudado', value: `Bs. ${(metricsSummary.totalRevenue || 0).toFixed(2)}` },
                         { label: 'Ventas hoy', value: metricsSummary.todaySales },
-                        { label: 'Recaudado hoy', value: `$${(metricsSummary.todayRevenue || 0).toFixed(2)}` }].map(card => (
+                        { label: 'Recaudado hoy', value: `Bs. ${(metricsSummary.todayRevenue || 0).toFixed(2)}` }].map(card => (
                           <View key={card.label} style={{ flexBasis: '48%', backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
                             <Text style={{ color: '#94a3b8', fontSize: 12 }}>{card.label}</Text>
                             <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{card.value}</Text>
@@ -2496,7 +2648,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                     return (
                       <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
                         <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{r?.title || 'Sin rifa seleccionada'}</Text>
-                        <Text style={{ color: palette.muted, fontSize: 12 }}>Ticket: ${r?.price || r?.ticketPrice || 0} • Cierre: {r?.endDate ? r.endDate.split('T')[0] : '—'}</Text>
+                        <Text style={{ color: palette.muted, fontSize: 12 }}>Ticket: Bs. {r?.price || r?.ticketPrice || 0} • Cierre: {r?.endDate ? r.endDate.split('T')[0] : '—'}</Text>
                         {r?.style?.bannerImage ? (
                           <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 10, marginTop: 10 }} resizeMode="cover" />
                         ) : null}

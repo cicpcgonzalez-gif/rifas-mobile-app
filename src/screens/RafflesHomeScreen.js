@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { palette } from '../theme';
 import { styles } from '../styles';
+import { formatMoneyVES } from '../utils';
 import Announcements from '../components/Announcements';
 import PublicProfileModal from '../components/PublicProfileModal';
 import { FilledButton } from '../components/UI';
@@ -384,7 +385,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                     </Text>
                     
                     <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>VES {item.price}</Text>
+                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(item.price, { decimals: 0 })}</Text>
                         <Text style={{ color: '#94a3b8', fontSize: 12 }}>
                             {remaining} tickets restantes
                         </Text>

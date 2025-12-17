@@ -15,6 +15,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../components/UI';
 import { palette } from '../theme';
 import { styles } from '../styles';
+import { formatMoneyVES } from '../utils';
 
 const TEST_MODE_TOPUP = true;
 
@@ -108,7 +109,7 @@ export default function WalletScreen({ api }) {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View>
               <Text style={styles.section}>Saldo disponible</Text>
-              <Text style={styles.balanceValue}>VES {balance.toFixed(2)}</Text>
+              <Text style={styles.balanceValue}>{formatMoneyVES(balance)}</Text>
             </View>
             <View style={styles.circleAccent}>
               <Ionicons name="wallet-outline" size={22} color="#fbbf24" />
@@ -149,7 +150,7 @@ export default function WalletScreen({ api }) {
 
           {showTopup && (
             <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12 }}>
-              <Text style={{ color: '#e2e8f0', marginBottom: 8, fontWeight: '700' }}>Monto a recargar (VES)</Text>
+              <Text style={{ color: '#e2e8f0', marginBottom: 8, fontWeight: '700' }}>Monto a recargar (Bs.)</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 <TextInput 
                   style={[styles.input, { flex: 1, marginBottom: 0 }]} 
@@ -168,11 +169,11 @@ export default function WalletScreen({ api }) {
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <View style={styles.statTile}> 
               <Text style={styles.statLabel}>Ingresos</Text>
-              <Text style={styles.statValue}>VES {movements.filter(m => m.type === 'deposit').reduce((acc, m) => acc + m.amount, 0).toFixed(0)}</Text>
+              <Text style={styles.statValue}>{formatMoneyVES(movements.filter(m => m.type === 'deposit').reduce((acc, m) => acc + m.amount, 0), { decimals: 0 })}</Text>
             </View>
             <View style={styles.statTile}> 
               <Text style={styles.statLabel}>Gastos</Text>
-              <Text style={[styles.statValue, { color: '#f97316' }]}>VES {Math.abs(movements.filter(m => m.type === 'purchase').reduce((acc, m) => acc + m.amount, 0)).toFixed(0)}</Text>
+              <Text style={[styles.statValue, { color: '#f97316' }]}>{formatMoneyVES(Math.abs(movements.filter(m => m.type === 'purchase').reduce((acc, m) => acc + m.amount, 0)), { decimals: 0 })}</Text>
             </View>
             <View style={styles.statTile}> 
               <Text style={styles.statLabel}>Tickets</Text>
@@ -199,7 +200,9 @@ export default function WalletScreen({ api }) {
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: m.type === 'deposit' ? '#10b981' : '#f87171', fontWeight: '800' }}>{m.type === 'deposit' ? '+' : ''}VES {m.amount.toFixed(2)}</Text>
+                    <Text style={{ color: m.type === 'deposit' ? '#10b981' : '#f87171', fontWeight: '800' }}>
+                      {m.type === 'deposit' ? '+' : ''}{formatMoneyVES(m.amount)}
+                    </Text>
                     <Text style={[styles.statusPill, m.status === 'approved' ? styles.statusApproved : m.status === 'pending' ? styles.statusPending : styles.statusRejected]}>{m.status}</Text>
                   </View>
                 </View>
@@ -220,7 +223,7 @@ export default function WalletScreen({ api }) {
                   <Text style={styles.ghostPill}>{p.status || 'pendiente'}</Text>
                 </View>
                 <Text style={styles.muted}>Ref: {p.reference || '—'}</Text>
-                <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>VES {amount || '0.00'}</Text>
+                <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(amount || 0)}</Text>
                 <Text style={styles.muted}>{new Date(p.createdAt).toLocaleDateString()}</Text>
               </View>
             );
