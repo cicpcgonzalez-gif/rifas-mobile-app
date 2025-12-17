@@ -3,23 +3,24 @@ import {
   SafeAreaView,
   View,
   Text,
+  Modal,
   ScrollView,
   ActivityIndicator,
   Image,
   TouchableOpacity,
   TextInput,
-  Alert
+  Alert,
+  Linking
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
 import { palette } from '../theme';
 import { styles } from '../styles';
 import { FilledButton } from '../components/UI';
-import { formatTicketNumber } from '../utils';
+import { formatTicketNumber, formatMoneyVES } from '../utils';
 
 import { useNavigation } from '@react-navigation/native';
 
@@ -28,16 +29,28 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [tickets, setTickets] = useState([]);
+  const [myPublications, setMyPublications] = useState([]);
+  const [myPublicationsLoading, setMyPublicationsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   // Admin Business State
   const [businessTab, setBusinessTab] = useState('personal'); // 'personal' | 'legal' | 'kyc' | 'subscription'
   const [kycStatus, setKycStatus] = useState('pending'); 
+  const [kycImages, setKycImages] = useState({ front: null, back: null, selfie: null });
+  const [kycUploading, setKycUploading] = useState(false);
   
+  const [boostData, setBoostData] = useState(null);
+  const [activatingBoost, setActivatingBoost] = useState(false);
+
   // const [myRaffles, setMyRaffles] = useState([]); // Removed as we use a separate screen now
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '' });
   const [changingPassword, setChangingPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  const [panelVisible, setPanelVisible] = useState(false);
+  const [movementsVisible, setMovementsVisible] = useState(false);
+  const [walletData, setWalletData] = useState({ balance: 0, currency: 'USD', transactions: [] });
+  const [movementsLoading, setMovementsLoading] = useState(false);
 
   const achievements = useMemo(() => {
     if (!profile) return [];
@@ -50,42 +63,175 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
   const [errorMsg, setErrorMsg] = useState('');
 
-  const copyReferral = async () => {
-    if (profile?.referralCode) {
-      await Clipboard.setStringAsync(profile.referralCode);
-      Alert.alert('Copiado', 'Código de referido copiado al portapapeles.');
+  const isAdminOrSuperadmin = useMemo(() => {
+    const role = String(profile?.role || '').trim().toLowerCase();
+    return role === 'admin' || role === 'superadmin';
+  }, [profile?.role]);
+
+  const { activePublications, closedPublications } = useMemo(() => {
+    const list = Array.isArray(myPublications) ? myPublications : [];
+    const active = [];
+    const closed = [];
+    for (const item of list) {
+      if (String(item?.status || '').toLowerCase() === 'active') active.push(item);
+      else closed.push(item);
     }
-  };
+    return { activePublications: active, closedPublications: closed };
+  }, [myPublications]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg('');
     try {
-      const [{ res: r1, data: d1 }, { res: r2, data: d2 }, { res: r4, data: d4 }] = await Promise.all([
-        api('/me'),
-        api('/me/tickets'),
-        api('/me/referrals')
-      ]);
-      
-      if (r1.ok) {
-        const user = d1;
-        if (r4.ok) {
-          user.referrals = d4.referrals;
-          user.referralCode = d4.code;
-        }
-        setProfile(user);
-        
-        // Removed inline raffle fetching
-      } else {
+      const { res: r1, data: d1 } = await api('/me');
+      if (!r1.ok) {
         setErrorMsg(d1?.error || `Error ${r1.status}: No se pudo cargar el perfil`);
+        setProfile(null);
+        setTickets([]);
+        setMyPublications([]);
+        setLoading(false);
+        return;
       }
+
+      const user = d1;
+      const role = String(user?.role || '').trim().toLowerCase();
+      const isAdmin = role === 'admin' || role === 'superadmin';
+
+      const requests = [api('/me/tickets'), api('/me/referrals')];
+      if (isAdmin && user?.id) requests.push(api(`/users/public/${user.id}/raffles`));
+      const [ticketsResp, referralsResp, pubsResp] = await Promise.all(requests);
+
+      const { res: r2, data: d2 } = ticketsResp;
+      const { res: r4, data: d4 } = referralsResp;
+
+      if (r4.ok) {
+        user.referrals = d4.referrals;
+        user.referralCode = d4.code;
+      }
+
+      setProfile(user);
+      const kycVerified = !!user?.identityVerified;
+      setKycStatus(kycVerified ? 'verified' : 'pending');
+
       if (r2.ok && Array.isArray(d2)) setTickets(d2);
+      else setTickets([]);
+
+      if (isAdmin) {
+        setMyPublicationsLoading(true);
+        
+        // Fetch Boost Data
+        api('/boosts/me').then(({ res, data }) => {
+          if (res.ok) setBoostData(data);
+        });
+
+        const pubs = pubsResp;
+        if (pubs?.res?.ok && pubs?.data && (Array.isArray(pubs.data.active) || Array.isArray(pubs.data.closed))) {
+          const active = Array.isArray(pubs.data.active) ? pubs.data.active : [];
+          const closed = Array.isArray(pubs.data.closed) ? pubs.data.closed : [];
+          const userStub = {
+            id: user.id,
+            name: user.name,
+            avatar: user.avatar,
+            identityVerified: !!user.identityVerified
+          };
+          setMyPublications([...active, ...closed].map((r) => ({ ...r, user: userStub })));
+        } else {
+          setMyPublications([]);
+        }
+        setMyPublicationsLoading(false);
+      } else {
+        setMyPublications([]);
+        setMyPublicationsLoading(false);
+      }
     } catch (e) {
       console.error('Profile Load Error:', e);
       setErrorMsg(e.message || 'Error de conexión');
     }
     setLoading(false);
   }, [api]);
+
+  const pickKycImage = async (kind, { camera = false } = {}) => {
+    try {
+      if (camera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la cámara.');
+      } else {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la galería.');
+      }
+
+      const result = camera
+        ? await ImagePicker.launchCameraAsync({ quality: 0.9, base64: false, allowsEditing: false })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.9, base64: false, allowsEditing: false });
+
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+
+      const normalized = await ImageManipulator.manipulateAsync(
+        asset.uri,
+        [{ resize: { width: Math.min(1200, asset.width || 1200) } }],
+        { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+      );
+
+      setKycImages((prev) => ({ ...prev, [kind]: { uri: normalized.uri, base64: normalized.base64 } }));
+    } catch (e) {
+      console.error('pickKycImage error:', e);
+      Alert.alert('Error', e.message || 'No se pudo cargar la imagen.');
+    }
+  };
+
+  const submitKyc = async () => {
+    if (!api) return;
+    if (!kycImages.front || !kycImages.back || !kycImages.selfie) {
+      return Alert.alert('Faltan documentos', 'Sube frente, dorso y selfie para enviar tu verificación.');
+    }
+    setKycUploading(true);
+    try {
+      const payload = {
+        documentType: 'cedula',
+        frontImage: kycImages.front.base64,
+        backImage: kycImages.back.base64,
+        selfieImage: kycImages.selfie.base64
+      };
+
+      const { res, data } = await api('/kyc/submit', { 
+        method: 'POST', 
+        body: JSON.stringify(payload) 
+      });
+
+      if (res.ok) {
+        Alert.alert('Enviado', 'Tu verificación fue enviada. Un superadmin la revisará.');
+        setKycStatus('pending');
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo enviar tu verificación.');
+      }
+    } catch (e) {
+      console.error('submitKyc error:', e);
+      Alert.alert('Error', e.message || 'Error de conexión');
+    } finally {
+      setKycUploading(false);
+    }
+  };
+
+  const activateBoost = async () => {
+    setActivatingBoost(true);
+    try {
+      const { res, data } = await api('/boosts/activate', { method: 'POST' });
+      if (res.ok) {
+        Alert.alert('¡Éxito!', 'Tu perfil ha sido promocionado por 24 horas.');
+        // Refresh boost data
+        const { res: r2, data: d2 } = await api('/boosts/me');
+        if (r2.ok) setBoostData(d2);
+      } else {
+        Alert.alert('No disponible', data?.error || 'No se pudo activar el boost.');
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', 'Error de conexión');
+    } finally {
+      setActivatingBoost(false);
+    }
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -196,9 +342,46 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
   const showReceipt = (item) => {
     Alert.alert(
       'Recibo',
-      `Rifa: ${item.raffleTitle || ''}\nTicket: ${item.number ? formatTicketNumber(item.number, item.digits) : '—'}\nSerial: ${item.serialNumber || '—'}\nEstado: ${item.status}\nFecha: ${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}\nVía: ${item.via || ''}`
+      `Rifa: ${item.raffleTitle || ''}\nTicket: ${item.number ? formatTicketNumber(item.number, item.digits) : '—'}\nSerial: ${item.serialNumber || '—'}\nID comprador: ${profile?.securityId || profile?.publicId || '—'}\nEstado: ${item.status}\nFecha: ${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}\nVía: ${item.via || ''}`
     );
   };
+
+  const loadMyMovements = useCallback(async () => {
+    if (!api) return;
+    setMovementsLoading(true);
+    try {
+      const { res, data } = await api('/wallet');
+      if (res.ok) {
+        setWalletData({
+          balance: Number(data?.balance || 0),
+          currency: data?.currency || 'USD',
+          transactions: Array.isArray(data?.transactions) ? data.transactions : []
+        });
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudieron cargar tus movimientos.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Error de conexión al cargar movimientos.');
+    }
+    setMovementsLoading(false);
+  }, [api]);
+
+  const statusPillStyle = useCallback((status) => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'approved') return styles.statusApproved;
+    if (s === 'rejected') return styles.statusRejected;
+    return styles.statusPending;
+  }, []);
+
+  const typeLabel = useCallback((type) => {
+    const t = String(type || '').toLowerCase();
+    if (!t) return 'Movimiento';
+    if (t === 'manual_payment') return 'Pago manual';
+    if (t === 'ticket_purchase') return 'Compra de tickets';
+    if (t === 'topup') return 'Recarga';
+    if (t === 'withdrawal') return 'Retiro';
+    return t.replace(/_/g, ' ');
+  }, []);
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -209,7 +392,134 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
         end={{ x: 1, y: 1 }}
       >
       <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>Mi perfil</Text>
+        <View style={[styles.rowBetween, { marginBottom: 12 }]}>
+          <Text style={[styles.title, { marginBottom: 0 }]}>Mi perfil</Text>
+          <TouchableOpacity
+            onPress={() => setPanelVisible(true)}
+            style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}
+            accessibilityLabel="Abrir panel de perfil"
+          >
+            <Ionicons name="grid-outline" size={20} color="#e2e8f0" />
+          </TouchableOpacity>
+        </View>
+
+        <Modal
+          visible={panelVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setPanelVisible(false)}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => setPanelVisible(false)} style={styles.overlay} />
+          <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: '82%', backgroundColor: 'rgba(12,18,36,0.98)', borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.10)', paddingTop: 48, paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.18)', borderWidth: 1, borderColor: 'rgba(124,58,237,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="person" size={18} color="#e2e8f0" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }} numberOfLines={1}>{profile?.name || 'Usuario'}</Text>
+                  <Text style={{ color: palette.muted, fontSize: 12 }} numberOfLines={1}>{profile?.email || ''}</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setPanelVisible(false)} style={{ padding: 8 }}>
+                <Ionicons name="close" size={22} color="#e2e8f0" />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              onPress={async () => {
+                setPanelVisible(false);
+                setMovementsVisible(true);
+                await loadMyMovements();
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, paddingHorizontal: 12, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
+            >
+              <View style={{ width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(34,211,238,0.14)', borderWidth: 1, borderColor: 'rgba(34,211,238,0.35)', alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="swap-vertical-outline" size={18} color={palette.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontWeight: '800' }}>Transacciones / Movimientos</Text>
+                <Text style={{ color: palette.subtext, fontSize: 12 }}>Ver tus últimos movimientos</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={movementsVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setMovementsVisible(false)}
+        >
+          <View style={[styles.overlay, { backgroundColor: 'rgba(10,12,24,0.72)' }]} />
+          <View style={{ position: 'absolute', left: 14, right: 14, top: 70, bottom: 26, backgroundColor: 'rgba(15,23,42,0.96)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', padding: 14 }}>
+            <View style={[styles.rowBetween, { marginBottom: 10 }]}>
+              <View>
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 18 }}>Movimientos</Text>
+                <Text style={{ color: palette.muted, fontSize: 12 }}>
+                  Saldo: {Number(walletData?.balance || 0).toFixed(2)} {walletData?.currency || 'USD'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={loadMyMovements}
+                  disabled={movementsLoading}
+                  style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center', opacity: movementsLoading ? 0.7 : 1 }}
+                >
+                  <Ionicons name="refresh" size={18} color="#e2e8f0" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setMovementsVisible(false)}
+                  style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <Ionicons name="close" size={18} color="#e2e8f0" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {movementsLoading ? (
+              <View style={{ paddingTop: 20, alignItems: 'center' }}>
+                <ActivityIndicator color={palette.primary} />
+                <Text style={[styles.muted, { marginTop: 8 }]}>Cargando movimientos...</Text>
+              </View>
+            ) : (
+              <ScrollView>
+                {Array.isArray(walletData?.transactions) && walletData.transactions.length > 0 ? (
+                  walletData.transactions.map((tx) => {
+                    const amount = Number(tx?.amount || 0);
+                    const currency = tx?.currency || walletData?.currency || 'USD';
+                    const status = String(tx?.status || 'pending').toLowerCase();
+                    return (
+                      <View key={String(tx?.id || Math.random())} style={styles.movementRow}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                          <View style={[styles.movementBadge, { backgroundColor: 'rgba(34,211,238,0.10)', borderColor: 'rgba(34,211,238,0.25)' }]}>
+                            <Ionicons name="swap-vertical-outline" size={16} color={palette.accent} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{typeLabel(tx?.type)}</Text>
+                            <Text style={{ color: palette.muted, fontSize: 12 }} numberOfLines={1}>
+                              {tx?.createdAt ? new Date(tx.createdAt).toLocaleString() : '—'}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text style={{ color: '#fff', fontWeight: '900' }}>{amount.toFixed(2)} {currency}</Text>
+                          <Text style={[styles.statusPill, statusPillStyle(status)]}>{status}</Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                ) : (
+                  <View style={{ paddingVertical: 26 }}>
+                    <Text style={{ color: '#94a3b8', textAlign: 'center' }}>Aún no tienes movimientos.</Text>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </Modal>
+
         {loading ? (
           <View style={styles.loaderContainer}>
             <ActivityIndicator color={palette.primary} size="large" />
@@ -234,16 +544,15 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
               <Text style={[styles.itemTitle, { fontSize: 24, marginTop: 12 }]}>{profile.name || 'Usuario'}</Text>
               
               {/* STATS ROW */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 20, paddingHorizontal: 10 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'center', width: '100%', marginTop: 20, paddingHorizontal: 10, gap: 28 }}>
                 <View style={{ alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{tickets.length}</Text>
                   <Text style={{ color: palette.subtext, fontSize: 12 }}>Tickets</Text>
                 </View>
-                <View style={{ width: 1, backgroundColor: 'rgba(255,255,255,0.1)' }} />
-                <View style={{ alignItems: 'center' }}>
+                <TouchableOpacity onPress={() => nav.navigate('Referrals')} style={{ alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{profile.referrals?.length || 0}</Text>
                   <Text style={{ color: palette.subtext, fontSize: 12 }}>Referidos</Text>
-                </View>
+                </TouchableOpacity>
               </View>
 
               {/* ACHIEVEMENTS */}
@@ -258,20 +567,27 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                 </View>
               )}
 
-              {/* REFERRAL CODE */}
-              {profile.referralCode && (
-                <TouchableOpacity onPress={copyReferral} style={{ marginTop: 20, backgroundColor: 'rgba(37, 99, 235, 0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderStyle: 'dashed', borderWidth: 1, borderColor: '#3b82f6', flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="copy-outline" size={16} color="#3b82f6" />
-                  <Text style={{ color: '#3b82f6', marginLeft: 8, fontWeight: 'bold' }}>Código: {profile.referralCode}</Text>
-                </TouchableOpacity>
-              )}
+              {(!!profile.identityVerified || !!profile.verified) && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 8 }}>
+                  {!!profile.verified && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(59, 130, 246, 0.12)', borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.25)' }}>
+                      <Ionicons name="star-outline" size={16} color={palette.primary} />
+                      <Text style={{ color: palette.primary, fontWeight: 'bold' }}>Email verificado</Text>
+                    </View>
+                  )}
 
-              {profile.verified && (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 8 }}>
-                  <Ionicons name="checkmark-circle" size={16} color="#3b82f6" />
-                  <Text style={{ color: '#3b82f6', fontWeight: 'bold' }}>Verificado</Text>
+                  {!!profile.identityVerified && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(251, 191, 36, 0.12)', borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.25)' }}>
+                      <Ionicons name="star" size={16} color="#fbbf24" />
+                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>KYC verificado</Text>
+                    </View>
+                  )}
                 </View>
               )}
+
+              {(profile.securityId || profile.publicId) ? (
+                <Text style={[styles.muted, { textAlign: 'center', marginTop: 6 }]}>ID: {profile.securityId || profile.publicId}</Text>
+              ) : null}
               
               <Text style={[styles.muted, { textAlign: 'center', marginTop: 8, paddingHorizontal: 20 }]}>
                 {profile.bio || 'Sin biografía.'}
@@ -288,26 +604,18 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                     <Ionicons name="logo-instagram" size={24} color="#E1306C" />
                   </TouchableOpacity>
                 ) : null}
+                {profile.socials?.tiktok ? (
+                  <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@','')}`)}>
+                    <Ionicons name="logo-tiktok" size={24} color="#e2e8f0" />
+                  </TouchableOpacity>
+                ) : null}
+                {profile.socials?.telegram ? (
+                  <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@','')}`)}>
+                    <Ionicons name="paper-plane-outline" size={24} color="#60a5fa" />
+                  </TouchableOpacity>
+                ) : null}
               </View>
 
-              {/* MY PUBLICATIONS BUTTON */}
-              {(profile.role === 'admin' || profile.role === 'superadmin') && (
-                <TouchableOpacity 
-                  style={[styles.button, { marginTop: 20, backgroundColor: 'rgba(59, 130, 246, 0.15)', width: 'auto', paddingHorizontal: 24 }]} 
-                  onPress={() => navigation.navigate('Rifas', { screen: 'MyPublications' })}
-                >
-                  <Ionicons name="list-outline" size={20} color="#3b82f6" />
-                  <Text style={{ color: '#3b82f6', fontWeight: 'bold', marginLeft: 8 }}>Mis Publicaciones</Text>
-                </TouchableOpacity>
-              )}
-
-              <TouchableOpacity 
-                style={[styles.button, styles.secondaryButton, { marginTop: 12, width: 'auto', paddingHorizontal: 24 }]} 
-                onPress={() => setIsEditing(!isEditing)}
-              >
-                <Ionicons name={isEditing ? "close-outline" : "create-outline"} size={18} color={palette.primary} />
-                <Text style={[styles.secondaryText, { marginLeft: 8 }]}>{isEditing ? 'Cancelar Edición' : 'Editar Perfil'}</Text>
-              </TouchableOpacity>
             </View>
 
             {/* EDIT FORM */}
@@ -351,6 +659,12 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
                         <Text style={styles.muted}>Instagram (@usuario)</Text>
                         <TextInput style={styles.input} value={profile.socials?.instagram} onChangeText={(v) => setProfile(p => ({...p, socials: {...p.socials, instagram: v}}))} />
+
+                        <Text style={styles.muted}>TikTok (@usuario)</Text>
+                        <TextInput style={styles.input} value={profile.socials?.tiktok} onChangeText={(v) => setProfile(p => ({...p, socials: {...p.socials, tiktok: v}}))} />
+
+                        <Text style={styles.muted}>Telegram (@usuario o usuario)</Text>
+                        <TextInput style={styles.input} value={profile.socials?.telegram} onChangeText={(v) => setProfile(p => ({...p, socials: {...p.socials, telegram: v}}))} />
                       </>
                     )}
 
@@ -377,22 +691,41 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                         </View>
 
                         <Text style={styles.section}>Documento de Identidad (Frente)</Text>
-                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => Alert.alert('Cargar', 'Simulación de carga de documento')}>
+                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => pickKycImage('front')}>
                             <Ionicons name="id-card-outline" size={24} color="#fff" />
                             <Text style={{ color: '#fff', marginLeft: 8 }}>Subir Foto</Text>
                         </TouchableOpacity>
+                        {kycImages.front ? (
+                          <Image source={{ uri: kycImages.front.uri }} style={{ width: '100%', height: 180, borderRadius: 12, marginTop: 10 }} resizeMode="contain" />
+                        ) : null}
 
                         <Text style={styles.section}>Documento de Identidad (Dorso)</Text>
-                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => Alert.alert('Cargar', 'Simulación de carga de documento')}>
+                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => pickKycImage('back')}>
                             <Ionicons name="id-card-outline" size={24} color="#fff" />
                             <Text style={{ color: '#fff', marginLeft: 8 }}>Subir Foto</Text>
                         </TouchableOpacity>
+                        {kycImages.back ? (
+                          <Image source={{ uri: kycImages.back.uri }} style={{ width: '100%', height: 180, borderRadius: 12, marginTop: 10 }} resizeMode="contain" />
+                        ) : null}
 
                         <Text style={styles.section}>Selfie con Cédula</Text>
-                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => Alert.alert('Cargar', 'Simulación de carga de documento')}>
+                        <TouchableOpacity style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 20, borderRadius: 12, alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' }} onPress={() => pickKycImage('selfie', { camera: true })}>
                             <Ionicons name="camera-outline" size={24} color="#fff" />
                             <Text style={{ color: '#fff', marginLeft: 8 }}>Tomar Selfie</Text>
                         </TouchableOpacity>
+                        {kycImages.selfie ? (
+                          <Image source={{ uri: kycImages.selfie.uri }} style={{ width: '100%', height: 180, borderRadius: 12, marginTop: 10 }} resizeMode="contain" />
+                        ) : null}
+
+                        <View style={{ marginTop: 14 }}>
+                          <FilledButton
+                            title={kycUploading ? 'Enviando...' : 'Enviar verificación'}
+                            onPress={submitKyc}
+                            loading={kycUploading}
+                            disabled={kycUploading}
+                            icon={<Ionicons name="cloud-upload-outline" size={18} color="#fff" />}
+                          />
+                        </View>
                       </>
                     )}
 
@@ -403,6 +736,37 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                             <Text style={{ color: '#fff', fontSize: 32, fontWeight: 'bold', marginVertical: 8 }}>GRATUITO</Text>
                             <Text style={{ color: palette.muted, textAlign: 'center' }}>Tienes acceso básico para crear rifas limitadas.</Text>
                         </View>
+
+                        {boostData && (
+                          <View style={{ backgroundColor: 'rgba(251, 191, 36, 0.1)', padding: 16, borderRadius: 12, marginBottom: 24, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.3)' }}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                              <Ionicons name="flash" size={24} color="#fbbf24" />
+                              <Text style={{ color: '#fbbf24', fontSize: 16, fontWeight: 'bold' }}>BOOST SEMANAL</Text>
+                            </View>
+                            <Text style={{ color: '#fff', marginBottom: 12 }}>
+                              {boostData.isBoosted 
+                                ? `¡Tu perfil está destacado hasta el ${new Date(boostData.activeBoosts[0].endAt).toLocaleString()}!`
+                                : 'Destaca tu perfil en la página principal por 24 horas. Tienes 1 boost gratis cada semana.'}
+                            </Text>
+                            
+                            {!boostData.isBoosted && (
+                              <FilledButton 
+                                title={activatingBoost ? 'Activando...' : 'Activar Boost Gratis'} 
+                                onPress={activateBoost} 
+                                loading={activatingBoost} 
+                                disabled={activatingBoost || (new Date() < new Date(boostData.nextEligibleAt))}
+                                style={{ backgroundColor: '#fbbf24' }}
+                                textStyle={{ color: '#000' }}
+                              />
+                            )}
+                            
+                            {!boostData.isBoosted && new Date() < new Date(boostData.nextEligibleAt) && (
+                              <Text style={{ color: palette.muted, fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                                Disponible nuevamente el {new Date(boostData.nextEligibleAt).toLocaleDateString()}
+                              </Text>
+                            )}
+                          </View>
+                        )}
 
                         <Text style={styles.section}>Mejorar mi Plan</Text>
                         <TouchableOpacity onPress={() => Alert.alert('Contactar Ventas', 'Te redirigiremos a WhatsApp para activar tu plan PRO.')} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, borderRadius: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -453,69 +817,185 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
             {/* REMOVED INLINE ADMIN RAFFLES */}
 
-            <View style={[styles.card, styles.glassCard]}>
-              <Text style={styles.section}>Legal</Text>
-              <TouchableOpacity 
-                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12 }}
-                onPress={() => nav.navigate('Legal')}
-              >
-                <Ionicons name="document-text-outline" size={24} color={palette.primary} />
-                <Text style={{ color: palette.text, marginLeft: 12, fontSize: 16 }}>Términos, Privacidad y Marco Legal</Text>
-                <Ionicons name="chevron-forward" size={20} color={palette.muted} style={{ marginLeft: 'auto' }} />
-              </TouchableOpacity>
-            </View>
+            {(profile.role === 'admin' || profile.role === 'superadmin') && (
+              <View style={[styles.card, styles.glassCard]}>
+                <Text style={[styles.section, { marginBottom: 10 }]}>Vista previa de publicaciones</Text>
 
-            <View style={[styles.card, styles.glassCard]}>
-              <TouchableOpacity style={styles.rowBetween} onPress={() => setShowPassword(!showPassword)}>
-                <Text style={styles.section}>Seguridad</Text>
-                <Ionicons name={showPassword ? "chevron-up" : "chevron-down"} size={20} color={palette.text} />
-              </TouchableOpacity>
-              
-              {showPassword && (
-                <View style={{ marginTop: 12 }}>
-                  <Text style={styles.muted}>Cambiar contraseña</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Contraseña actual"
-                    secureTextEntry
-                    value={passwordForm.current}
-                    onChangeText={(v) => setPasswordForm(s => ({ ...s, current: v }))}
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Nueva contraseña"
-                    secureTextEntry
-                    value={passwordForm.new}
-                    onChangeText={(v) => setPasswordForm(s => ({ ...s, new: v }))}
-                  />
-                  <FilledButton 
-                    title={changingPassword ? 'Actualizando...' : 'Actualizar contraseña'} 
-                    onPress={changePassword} 
-                    loading={changingPassword} 
-                    disabled={changingPassword}
-                    icon={<Ionicons name="lock-closed-outline" size={18} color="#fff" />}
-                  />
+                {myPublicationsLoading ? (
+                  <ActivityIndicator color={palette.primary} />
+                ) : (
+                  <>
+                    <Text style={[styles.muted, { marginBottom: 8 }]}>Activas: {activePublications.length}</Text>
+                    {activePublications.length === 0 ? <Text style={styles.muted}>No tienes publicaciones activas.</Text> : null}
+                    {activePublications.map((item) => {
+                      const stats = item?.stats || {};
+                      const total = Number(item?.totalTickets || stats.total || 0);
+                      const sold = Number(stats.sold || item?.soldTickets || 0);
+                      const remaining = Number(stats.remaining ?? (total ? Math.max(total - sold, 0) : 0));
+                      const gallery = Array.isArray(item?.style?.gallery) && item.style.gallery.length
+                        ? item.style.gallery
+                        : item?.style?.bannerImage
+                          ? [item.style.bannerImage]
+                          : [];
+                      const banner = gallery[0] || null;
+
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          activeOpacity={0.9}
+                          onPress={() => nav.navigate('RaffleDetail', { raffle: item })}
+                          style={[styles.card, styles.glassCard, { marginBottom: 10 }]}
+                        >
+                          {banner ? (
+                            <Image source={{ uri: banner }} style={[styles.bannerImage, { height: 180 }]} resizeMode="cover" />
+                          ) : null}
+                          <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 4 }]} numberOfLines={1}>{item.title}</Text>
+                          <Text style={styles.muted}>
+                            ACTIVA • Tickets: {sold}/{total} • Restantes: {remaining}
+                          </Text>
+                          {item?.ticketPrice != null ? (
+                            <Text style={[styles.muted, { marginTop: 6 }]}>Precio: {formatMoneyVES(item.ticketPrice || item.price || 0, { decimals: 0 })}</Text>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })}
+
+                    <View style={{ height: 14 }} />
+
+                    <Text style={[styles.muted, { marginBottom: 8 }]}>Cerradas: {closedPublications.length}</Text>
+                    {closedPublications.length === 0 ? <Text style={styles.muted}>No tienes publicaciones cerradas.</Text> : null}
+                    {closedPublications.map((item) => {
+                      const stats = item?.stats || {};
+                      const total = Number(item?.totalTickets || stats.total || 0);
+                      const sold = Number(stats.sold || item?.soldTickets || 0);
+                      const gallery = Array.isArray(item?.style?.gallery) && item.style.gallery.length
+                        ? item.style.gallery
+                        : item?.style?.bannerImage
+                          ? [item.style.bannerImage]
+                          : [];
+                      const banner = gallery[0] || null;
+
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          activeOpacity={0.9}
+                          onPress={() => nav.navigate('RaffleDetail', { raffle: item })}
+                          style={[styles.card, styles.glassCard, { marginBottom: 10 }]}
+                        >
+                          {banner ? (
+                            <Image source={{ uri: banner }} style={[styles.bannerImage, { height: 180 }]} resizeMode="cover" />
+                          ) : null}
+                          <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 4 }]} numberOfLines={1}>{item.title}</Text>
+                          <Text style={styles.muted}>
+                            CERRADA • Tickets: {sold}/{total}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </>
+                )}
+              </View>
+            )}
+
+            {/* ACTIVIDAD PARA USUARIOS (tickets) */}
+            {!isAdminOrSuperadmin && (
+              <View style={[styles.card, styles.glassCard]}>
+                <Text style={styles.section}>Actividad</Text>
+                {tickets.length === 0 ? (
+                  <Text style={styles.muted}>Aún no tienes actividad.</Text>
+                ) : (
+                  tickets.slice(0, 12).map((t) => (
+                    <TouchableOpacity
+                      key={t.id}
+                      onPress={() => showReceipt(t)}
+                      style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}
+                    >
+                      <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 2 }]} numberOfLines={1}>{t.raffleTitle || 'Rifa'}</Text>
+                      <Text style={styles.muted}>
+                        {t.status || '—'} • {t.createdAt ? new Date(t.createdAt).toLocaleDateString() : '—'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            )}
+
+            {/* Botón Editar Perfil debe ir debajo de la vista previa/actividad */}
+            <TouchableOpacity 
+              style={[styles.button, styles.secondaryButton, { marginTop: 12, width: 'auto', paddingHorizontal: 24, alignSelf: 'center' }]} 
+              onPress={() => setIsEditing(!isEditing)}
+            >
+              <Ionicons name={isEditing ? "close-outline" : "create-outline"} size={18} color={palette.primary} />
+              <Text style={[styles.secondaryText, { marginLeft: 8 }]}>{isEditing ? 'Cancelar Edición' : 'Editar Perfil'}</Text>
+            </TouchableOpacity>
+
+            {!isAdminOrSuperadmin && (
+              <>
+                <View style={[styles.card, styles.glassCard]}>
+                  <Text style={styles.section}>Legal</Text>
+                  <TouchableOpacity 
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12 }}
+                    onPress={() => nav.navigate('Legal')}
+                  >
+                    <Ionicons name="document-text-outline" size={24} color={palette.primary} />
+                    <Text style={{ color: palette.text, marginLeft: 12, fontSize: 16 }}>Términos, Privacidad y Marco Legal</Text>
+                    <Ionicons name="chevron-forward" size={20} color={palette.muted} style={{ marginLeft: 'auto' }} />
+                  </TouchableOpacity>
                 </View>
-              )}
-            </View>
 
-            <View style={{ marginTop: 20, gap: 12, marginBottom: 40 }}>
-              <FilledButton 
-                title="Cerrar sesión" 
-                onPress={onLogout} 
-                style={{ backgroundColor: '#ef4444' }} 
-                icon={<Ionicons name="log-out-outline" size={18} color="#fff" />} 
-              />
-              
-              <TouchableOpacity 
-                onPress={deleteAccount}
-                style={{ padding: 12, alignItems: 'center' }}
-              >
-                <Text style={{ color: '#94a3b8', fontSize: 14, textDecorationLine: 'underline' }}>
-                  Eliminar mi cuenta
-                </Text>
-              </TouchableOpacity>
-            </View>
+                <View style={[styles.card, styles.glassCard]}>
+                  <TouchableOpacity style={styles.rowBetween} onPress={() => setShowPassword(!showPassword)}>
+                    <Text style={styles.section}>Seguridad</Text>
+                    <Ionicons name={showPassword ? "chevron-up" : "chevron-down"} size={20} color={palette.text} />
+                  </TouchableOpacity>
+                  
+                  {showPassword && (
+                    <View style={{ marginTop: 12 }}>
+                      <Text style={styles.muted}>Cambiar contraseña</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Contraseña actual"
+                        secureTextEntry
+                        value={passwordForm.current}
+                        onChangeText={(v) => setPasswordForm(s => ({ ...s, current: v }))}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Nueva contraseña"
+                        secureTextEntry
+                        value={passwordForm.new}
+                        onChangeText={(v) => setPasswordForm(s => ({ ...s, new: v }))}
+                      />
+                      <FilledButton 
+                        title={changingPassword ? 'Actualizando...' : 'Actualizar contraseña'} 
+                        onPress={changePassword} 
+                        loading={changingPassword} 
+                        disabled={changingPassword}
+                        icon={<Ionicons name="lock-closed-outline" size={18} color="#fff" />}
+                      />
+                    </View>
+                  )}
+                </View>
+
+                <View style={{ marginTop: 20, gap: 12, marginBottom: 40 }}>
+                  <FilledButton 
+                    title="Cerrar sesión" 
+                    onPress={onLogout} 
+                    style={{ backgroundColor: '#ef4444' }} 
+                    icon={<Ionicons name="log-out-outline" size={18} color="#fff" />} 
+                  />
+                  
+                  <TouchableOpacity 
+                    onPress={deleteAccount}
+                    style={{ padding: 12, alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#94a3b8', fontSize: 14, textDecorationLine: 'underline' }}>
+                      Eliminar mi cuenta
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </>
         ) : (
           <Text style={{ color: palette.error, textAlign: 'center' }}>{errorMsg || 'No se pudo cargar el perfil.'}</Text>

@@ -14,15 +14,15 @@ import {
   Animated,
   Modal
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { ENV } from '../config/env';
 import { palette } from '../theme';
 import { HeroBanner, FilledButton, OutlineButton } from '../components/UI';
 
-const APP_SLOGAN = 'Tu suerte empieza aquí.';
+const APP_SLOGAN = 'Buena suerte.';
 
 const getAppVersionLabel = () => {
   const version = Constants?.expoConfig?.version || Constants?.manifest?.version;
@@ -75,23 +75,39 @@ export default function AuthScreen({ onAuth }) {
     address: '',
     dob: '',
     cedula: '',
-    phone: ''
+    phone: '',
+    referralCode: ''
   });
   const [rememberMe, setRememberMe] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [statePickerVisible, setStatePickerVisible] = useState(false);
-  const [dobPickerVisible, setDobPickerVisible] = useState(false);
-  const [dobDate, setDobDate] = useState(new Date());
+  const [showDobPicker, setShowDobPicker] = useState(false);
 
   const handleChange = (key, value) => setForm((f) => ({ ...f, [key]: value }));
 
-  const handleDobChange = (_event, selectedDate) => {
-    if (Platform.OS !== 'ios') setDobPickerVisible(false);
-    if (!_event || _event.type === 'dismissed') return;
-    const currentDate = selectedDate || dobDate;
-    setDobDate(currentDate);
-    const iso = currentDate.toISOString().slice(0, 10);
-    handleChange('dob', iso);
+  const dateToIsoDate = (date) => {
+    if (!date) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const isoDateToDisplay = (iso) => {
+    const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(iso || ''));
+    if (!m) return '';
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  };
+
+  const isoDateToLocalDate = (iso) => {
+    const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(String(iso || ''));
+    if (!m) return null;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const dt = new Date(year, month - 1, day);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt;
   };
 
   useEffect(() => {
@@ -102,11 +118,9 @@ export default function AuthScreen({ onAuth }) {
     }).start();
   }, [heroAnim]);
 
-  useEffect(() => {
-    if (!form.dob) return;
-    const parsed = new Date(form.dob);
-    if (!Number.isNaN(parsed.getTime())) setDobDate(parsed);
-  }, [form.dob]);
+  const openDobPicker = () => {
+    setShowDobPicker(true);
+  };
 
   const handleLogin = async () => {
     const errors = {};
@@ -530,17 +544,43 @@ export default function AuthScreen({ onAuth }) {
                 <TextInput style={[styles.input, styles.inputSoft]} placeholder="Cédula de Identidad" value={form.cedula} onChangeText={(v) => handleChange('cedula', v)} keyboardType="numeric" placeholderTextColor="#cbd5e1" />
                 <TouchableOpacity
                   style={[styles.input, styles.inputSoft, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
-                  onPress={() => setDobPickerVisible(true)}
+                  onPress={openDobPicker}
+                  activeOpacity={0.9}
                 >
                   <Text style={{ color: form.dob ? '#fff' : '#cbd5e1' }}>
-                    {form.dob || 'Fecha de nacimiento'}
+                    {form.dob ? isoDateToDisplay(form.dob) : 'Fecha de nacimiento'}
                   </Text>
                   <Ionicons name="calendar-outline" size={18} color="#cbd5e1" />
                 </TouchableOpacity>
+
+                {showDobPicker ? (
+                  <DateTimePicker
+                    value={isoDateToLocalDate(form.dob) || new Date(new Date().getFullYear() - 18, 0, 1)}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    maximumDate={new Date()}
+                    onChange={(event, selectedDate) => {
+                      if (Platform.OS === 'android') setShowDobPicker(false);
+                      if (event?.type === 'dismissed') return;
+                      if (!selectedDate) return;
+                      handleChange('dob', dateToIsoDate(selectedDate));
+                    }}
+                  />
+                ) : null}
                 
                 <Text style={{ color: '#e2e8f0', fontSize: 14, fontWeight: '700', marginBottom: 10, marginTop: 10 }}>Contacto</Text>
                 <TextInput style={[styles.input, styles.inputSoft]} placeholder="Teléfono Móvil" value={form.phone} onChangeText={(v) => handleChange('phone', v)} keyboardType="phone-pad" placeholderTextColor="#cbd5e1" />
                 <TextInput style={[styles.input, styles.inputSoft]} placeholder="Dirección de Habitación" value={form.address} onChangeText={(v) => handleChange('address', v)} placeholderTextColor="#cbd5e1" />
+
+                <Text style={{ color: '#e2e8f0', fontSize: 14, fontWeight: '700', marginBottom: 10, marginTop: 10 }}>Referido (opcional)</Text>
+                <TextInput
+                  style={[styles.input, styles.inputSoft]}
+                  placeholder="Código de referido (opcional)"
+                  value={form.referralCode}
+                  onChangeText={(v) => handleChange('referralCode', v)}
+                  autoCapitalize="characters"
+                  placeholderTextColor="#cbd5e1"
+                />
                 
                 {/* Terms Checkbox */}
                 <TouchableOpacity 
@@ -578,7 +618,6 @@ export default function AuthScreen({ onAuth }) {
             )}
             <View style={{ marginTop: 40, alignItems: 'center', paddingBottom: 20 }}>
               <Text style={{ color: palette.muted, fontSize: 12, fontWeight: '600' }}>{APP_SLOGAN}</Text>
-              <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.7 }}>RIF-j408537010</Text>
               <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.5 }}>{getAppVersionLabel()}</Text>
               <Text style={{ color: palette.muted, fontSize: 10, marginTop: 2, opacity: 0.5 }}>© 2025 MegaRifas. Todos los derechos reservados.</Text>
             </View>
@@ -606,15 +645,6 @@ export default function AuthScreen({ onAuth }) {
               </View>
             </View>
           </Modal>
-          {dobPickerVisible && (
-            <DateTimePicker
-              value={dobDate}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
-              onChange={handleDobChange}
-              maximumDate={new Date()}
-            />
-          )}
         </KeyboardAvoidingView>
       </LinearGradient>
     </SafeAreaView>

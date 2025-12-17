@@ -11,6 +11,7 @@ import {
   ImageBackground,
   ActivityIndicator,
   Alert,
+  ToastAndroid,
   StyleSheet,
   Switch,
   Animated,
@@ -181,22 +182,127 @@ class SectionErrorBoundary extends React.Component {
   }
 }
 
-const normalizeImage = async (asset, { maxWidth = 1024, compress = 0.7 } = {}) => {
-  const targetWidth = Math.min(maxWidth, asset?.width || maxWidth);
-  const manipResult = await ImageManipulator.manipulateAsync(
-    asset.uri,
-    [{ resize: { width: targetWidth } }],
-    { compress, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-  );
-  return `data:image/jpeg;base64,${manipResult.base64}`;
+const normalizeImage = async (
+  asset,
+  {
+    maxWidth = 1024,
+    compress = 0.7,
+    maxChars = 600_000,
+    minCompress = 0.35,
+    maxIterations = 4
+  } = {}
+) => {
+  const uri = asset?.uri;
+  if (!uri) return null;
+
+  const baseWidth = Number(asset?.width) || maxWidth;
+  let currentWidth = Math.min(maxWidth, baseWidth);
+  let currentCompress = compress;
+  let lastDataUrl = null;
+
+  for (let i = 0; i < maxIterations; i += 1) {
+    const width = Math.max(320, Math.round(currentWidth));
+    const jpegCompress = Math.max(minCompress, currentCompress);
+
+    const manipResult = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width } }],
+      { compress: jpegCompress, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+    );
+
+    if (!manipResult?.base64) return null;
+    const dataUrl = `data:image/jpeg;base64,${manipResult.base64}`;
+    lastDataUrl = dataUrl;
+
+    // En JSON, el tamaño real del request crece con la longitud del string.
+    if (dataUrl.length <= maxChars) return dataUrl;
+
+    // Reducir progresivamente hasta entrar en el límite.
+    currentWidth = Math.max(320, currentWidth * 0.82);
+    currentCompress = Math.max(minCompress, currentCompress - 0.15);
+  }
+
+  return lastDataUrl;
 };
 
-export default function AdminScreen({ api, user, modulesConfig }) {
+export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const route = useRoute();
   const navigation = useNavigation();
   const lastEditHandledRef = useRef(null);
+  const bannerAssetRef = useRef(null);
+  const galleryAssetsRef = useRef([]);
   const [activeSection, setActiveSection] = useState(null);
   const isSuperadmin = isSuperadminRole(user?.role);
+  
+  // Reports System
+  const [reports, setReports] = useState([]);
+  const [loadingReports, setLoadingReports] = useState(false);
+
+  const loadReports = useCallback(async () => {
+    setLoadingReports(true);
+    try {
+      const { res, data } = await api('/superadmin/reports?status=open');
+      if (res.ok) {
+        setReports(data);
+      }
+    } catch (err) {
+      console.log('Error loading reports', err);
+    }
+    setLoadingReports(false);
+  }, [api]);
+
+  const resolveReport = async (reportId, action) => {
+    // action: 'resolved' | 'dismissed'
+    const { res, data } = await api(`/superadmin/reports/${reportId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: action })
+    });
+    if (res.ok) {
+      Alert.alert('Éxito', `Reporte ${action === 'resolved' ? 'resuelto' : 'desestimado'}.`);
+      loadReports();
+    } else {
+      Alert.alert('Error', data.error || 'No se pudo actualizar el reporte.');
+    }
+  };
+
+  const quickNotify = useCallback((message) => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    if (Platform.OS === 'android') {
+      try {
+        ToastAndroid.show(text, ToastAndroid.SHORT);
+        return;
+      } catch (_e) {
+        // fallback below
+      }
+    }
+    Alert.alert('Info', text);
+  }, []);
+
+  const uploadImageAsset = useCallback(
+    async (asset) => {
+      if (!asset?.uri) return null;
+      const form = new FormData();
+
+      const rawType = asset?.mimeType || asset?.type;
+      const type = typeof rawType === 'string' && rawType.includes('/') ? rawType : 'image/jpeg';
+      const name =
+        (typeof asset?.fileName === 'string' && asset.fileName) ||
+        (typeof asset?.filename === 'string' && asset.filename) ||
+        `image_${Date.now()}.jpg`;
+
+      form.append('file', { uri: asset.uri, name, type });
+
+      const { res, data } = await api('/admin/uploads/image', {
+        method: 'POST',
+        body: form
+      });
+
+      if (!res.ok) throw new Error(data?.error || 'No se pudo subir/procesar la imagen.');
+      return data?.dataUrl || null;
+    },
+    [api]
+  );
 
   // Handle navigation params for editing
   useFocusEffect(
@@ -280,7 +386,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
 
   const MENU_ITEMS = useMemo(() => {
     const items = [
-      { id: 'account', title: 'Mi Cuenta', icon: 'person-circle-outline', color: palette.primary },
+      { id: 'account', title: 'Perfil', icon: 'person-circle-outline', color: palette.primary },
       { id: 'support', title: 'Mi Soporte', icon: 'headset-outline', color: '#f87171' },
       { id: 'push', title: 'Notificaciones', icon: 'notifications-outline', color: '#f472b6' },
       { id: 'security', title: 'Cód. Seguridad', icon: 'shield-checkmark-outline', color: '#34d399' },
@@ -288,6 +394,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       { id: 'raffles', title: 'Gestión de Rifas', icon: 'create-outline', color: '#a78bfa' },
       { id: 'dashboard', title: 'Dashboard', icon: 'speedometer-outline', color: '#22c55e' },
       { id: 'payments', title: 'Validar Pagos', icon: 'cash-outline', color: '#10b981' },
+      { id: 'movements', title: 'Movimientos', icon: 'swap-vertical-outline', color: palette.accent },
       { id: 'tickets', title: 'Verificador', icon: 'qr-code-outline', color: '#f97316' },
       { id: 'news', title: 'Novedades', icon: 'newspaper-outline', color: '#60a5fa' },
     ];
@@ -295,6 +402,8 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (isSuperadmin) {
       // Superadmin siempre ve los bloques críticos aunque el backend no mande config
       items.push({ id: 'sa_users', title: 'Usuarios', icon: 'people-outline', color: '#22d3ee', requiresSuperadmin: true });
+      items.push({ id: 'reports', title: 'Reportes', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true });
+      items.push({ id: 'reports', title: 'Reportes', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true });
       items.push({ id: 'sa_tech_support', title: 'Soporte Técnico', icon: 'call-outline', color: '#38bdf8', requiresSuperadmin: true });
       items.push({ id: 'sa_smtp', title: 'Correo SMTP', icon: 'mail-outline', color: '#facc15', requiresSuperadmin: true });
       if (!modulesConfig || modulesConfig?.superadmin?.audit !== false) {
@@ -318,6 +427,10 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const [actingId, setActingId] = useState(null);
   const [paymentFilters, setPaymentFilters] = useState({ raffleId: '', status: 'pending', reference: '' });
   const [proofViewer, setProofViewer] = useState({ visible: false, uri: '' });
+
+  const [adminTransactions, setAdminTransactions] = useState([]);
+  const [adminTxLoading, setAdminTxLoading] = useState(false);
+  const [adminTxFilters, setAdminTxFilters] = useState({ status: '', q: '' });
   const [styleForm, setStyleForm] = useState({ raffleId: null, bannerImage: '', gallery: [], themeColor: '#2563eb', terms: '', whatsapp: '', instagram: '' });
   const [savingStyle, setSavingStyle] = useState(false);
   const [styleLoading, setStyleLoading] = useState(false);
@@ -386,6 +499,33 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (activeSection === 'dashboard') loadMetrics();
   }, [activeSection]);
 
+  const deleteAccount = useCallback(() => {
+    Alert.alert(
+      'Eliminar cuenta',
+      '¿Estás seguro de que quieres eliminar tu cuenta? Esta acción es irreversible.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { res, data } = await api('/me', { method: 'DELETE' });
+              if (res.ok) {
+                Alert.alert('Cuenta eliminada', 'Tu cuenta ha sido eliminada correctamente.');
+                if (typeof onLogout === 'function') onLogout();
+              } else {
+                Alert.alert('Error', data?.error || 'No se pudo eliminar la cuenta.');
+              }
+            } catch (e) {
+              Alert.alert('Error', e?.message || 'Error de conexión al eliminar la cuenta.');
+            }
+          }
+        }
+      ]
+    );
+  }, [api, onLogout]);
+
   useEffect(() => {
     setShowLotteryModal(false);
     setStartPickerVisible(false);
@@ -413,6 +553,29 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     }
     setSendingPush(false);
   };
+
+  const loadAdminTransactions = useCallback(async () => {
+    setAdminTxLoading(true);
+    try {
+      const params = [];
+      if (adminTxFilters.status) params.push(`status=${encodeURIComponent(adminTxFilters.status)}`);
+      if (adminTxFilters.q) params.push(`q=${encodeURIComponent(adminTxFilters.q)}`);
+      params.push('limit=200');
+
+      const query = params.length ? `?${params.join('&')}` : '';
+      const { res, data } = await api(`/admin/transactions${query}`);
+      if (res.ok && Array.isArray(data)) setAdminTransactions(data);
+      else setAdminTransactions([]);
+    } catch (e) {
+      setAdminTransactions([]);
+      Alert.alert('Error', e?.message || 'No se pudieron cargar los movimientos.');
+    }
+    setAdminTxLoading(false);
+  }, [api, adminTxFilters.q, adminTxFilters.status]);
+
+  useEffect(() => {
+    if (activeSection === 'movements') loadAdminTransactions();
+  }, [activeSection, loadAdminTransactions]);
 
   const checkWinner = async () => {
     if (!lotteryCheck.raffleId || !lotteryCheck.number) return Alert.alert('Faltan datos', 'Selecciona rifa y número.');
@@ -1087,14 +1250,24 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la galería.');
     const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.9,
+      quality: 1,
       allowsEditing: false,
       base64: false
     });
     if (!result.canceled && result.assets?.length) {
       const asset = result.assets[0];
-      const normalized = await normalizeImage(asset, { maxWidth: 1400, compress: 0.85 });
-      setStyleForm((s) => ({ ...s, bannerImage: normalized }));
+      try {
+        bannerAssetRef.current = asset;
+        // Para rifas: evitar fallas del endpoint de uploads. Normalizar localmente a dataURL.
+        const processed = await normalizeImage(asset, {
+          maxWidth: 1100,
+          compress: 0.7,
+          maxChars: 750_000
+        });
+        if (processed) setStyleForm((s) => ({ ...s, bannerImage: processed }));
+      } catch (e) {
+        Alert.alert('Error', e?.message || 'No se pudo subir la imagen.');
+      }
     }
   };
 
@@ -1105,24 +1278,40 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la galería.');
     const result = await ImagePicker.launchImageLibraryAsync({
-      quality: 0.9,
+      quality: 1,
       allowsEditing: false,
       base64: false
     });
     if (!result.canceled && result.assets?.length) {
       const asset = result.assets[0];
-      const normalized = await normalizeImage(asset, { maxWidth: 1400, compress: 0.85 });
-      setStyleForm((s) => ({ ...s, gallery: [...ensureArray(s.gallery), normalized] }));
+      try {
+        // Para rifas: evitar fallas del endpoint de uploads. Normalizar localmente a dataURL.
+        const processed = await normalizeImage(asset, {
+          maxWidth: 1000,
+          compress: 0.65,
+          maxChars: 550_000
+        });
+        if (processed) {
+          galleryAssetsRef.current = [...ensureArray(galleryAssetsRef.current), asset];
+          setStyleForm((s) => ({ ...s, gallery: [...ensureArray(s.gallery), processed] }));
+        }
+      } catch (e) {
+        Alert.alert('Error', e?.message || 'No se pudo subir la imagen.');
+      }
     }
   };
 
   const removeGalleryImage = (index) => {
+    galleryAssetsRef.current = ensureArray(galleryAssetsRef.current).filter((_, i) => i !== index);
     setStyleForm((s) => ({ ...s, gallery: ensureArray(s.gallery).filter((_, i) => i !== index) }));
   };
 
   const closeProofViewer = () => setProofViewer({ visible: false, uri: '' });
 
   const editRaffle = (raffle) => {
+    // Al editar una rifa existente, no tenemos los assets originales locales.
+    bannerAssetRef.current = null;
+    galleryAssetsRef.current = [];
     const stylePaymentMethods = Array.isArray(raffle?.style?.paymentMethods) ? raffle.style.paymentMethods : null;
     setRaffleForm({
       id: raffle.id,
@@ -1188,10 +1377,21 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (!raffleForm.title) errors.title = true;
     if (!raffleForm.price) errors.price = true;
     if (!raffleForm.lottery) errors.lottery = true;
+    if (!raffleForm.description) errors.description = true;
     
     setRaffleErrors(errors);
     if (Object.keys(errors).length > 0) return;
+
+    const isCreate = !raffleForm.id;
+
+    // No permitir crear/publicar rifas nuevas sin imágenes
+    const galleryImages = ensureArray(styleForm.gallery).filter(Boolean);
+    const bannerImage = styleForm.bannerImage || galleryImages[0] || '';
+    if (isCreate && !bannerImage && galleryImages.length === 0) {
+      return Alert.alert('Faltan imágenes', 'Debes subir al menos 1 imagen antes de publicar la rifa.');
+    }
     
+     quickNotify('Guardando rifa...');
     if (raffleForm.paymentMethods.includes('mobile_payment')) {
        await api('/me', { method: 'PATCH', body: JSON.stringify({ bankDetails: bankSettings }) });
     }
@@ -1200,7 +1400,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       ? raffleForm.instantWins.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n))
       : [];
 
-    const payload = {
+    const createPayload = {
       title: raffleForm.title,
       price: Number(raffleForm.price),
       description: raffleForm.description,
@@ -1215,37 +1415,125 @@ export default function AdminScreen({ api, user, modulesConfig }) {
       minTickets: Number(raffleForm.minTickets) || 1,
       paymentMethods: raffleForm.paymentMethods
     };
+
+    const updatePayload = {
+      title: raffleForm.title,
+      prize: raffleForm.description,
+      ticketPrice: Number(raffleForm.price),
+      totalTickets: raffleForm.totalTickets ? Number(raffleForm.totalTickets) : undefined,
+      lottery: raffleForm.lottery,
+      terms: raffleForm.terms || null
+    };
+
+    const payload = isCreate ? createPayload : updatePayload;
+
+    if (isCreate) {
+      const confirmed = await new Promise(resolve => {
+        Alert.alert(
+          'Confirmar publicación',
+          'Una vez publicada, no podrás eliminar la rifa (solo cerrarla). ¿Deseas continuar?',
+          [
+            { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+            { text: 'Publicar', onPress: () => resolve(true) }
+          ]
+        );
+      });
+      if (!confirmed) return;
+    }
+
     setSavingRaffle(true);
-    const isCreate = !raffleForm.id;
-    const endpoint = raffleForm.id ? `/admin/raffles/${raffleForm.id}` : '/admin/raffles';
-    const method = raffleForm.id ? 'PATCH' : 'POST';
+    // Crear: el backend usa POST /raffles. Editar: PATCH /admin/raffles/:id
+    const endpoint = isCreate ? '/raffles' : `/admin/raffles/${raffleForm.id}`;
+    const method = isCreate ? 'POST' : 'PATCH';
     const { res, data } = await api(endpoint, { method, body: JSON.stringify(payload) });
     
     if (res.ok) {
       // Save style if we have style data
-      const raffleId = raffleForm.id || data.id || data.raffle?.id;
+      const raffleId = raffleForm.id || data.id || data.raffle?.id || data?.raffle?.id;
       let styleError = null;
       let activationError = null;
       
       if (raffleId) {
-        const stylePayload = {
+        const buildStylePayload = (nextBannerImage, nextGalleryImages) => ({
           style: {
-            bannerImage: styleForm.bannerImage,
-            gallery: styleForm.gallery,
+            bannerImage: nextBannerImage,
+            gallery: nextGalleryImages,
             themeColor: styleForm.themeColor,
             whatsapp: styleForm.whatsapp,
             instagram: styleForm.instagram,
-            paymentMethods: raffleForm.paymentMethods
+            paymentMethods: raffleForm.paymentMethods,
+            digits: raffleForm.digits,
+            startDate: raffleForm.startDate,
+            endDate: raffleForm.endDate,
+            securityCode: raffleForm.securityCode,
+            instantWins: instantWinsArray,
+            minTickets: Number(raffleForm.minTickets) || 1
           }
-        };
-        const styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(stylePayload) });
+        });
+
+        quickNotify('Subiendo imágenes...');
+        let finalBannerImage = bannerImage;
+        let finalGalleryImages = galleryImages;
+
+        // Intento 1: subir con lo ya procesado
+        let styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(buildStylePayload(finalBannerImage, finalGalleryImages)) });
+
+        // Si el backend responde 413, recomprimir automáticamente y reintentar 1 vez
+        if (!styleRes.res.ok && (styleRes.res.status === 413 || /entity too large|request entity too large/i.test(String(styleRes.data?.error || '')))) {
+          quickNotify('Comprimiendo más las imágenes...');
+
+          try {
+            const bannerAsset = bannerAssetRef.current;
+            if (bannerAsset?.uri) {
+              finalBannerImage = await normalizeImage(bannerAsset, {
+                maxWidth: 900,
+                compress: 0.55,
+                maxChars: 320_000,
+                maxIterations: 5
+              });
+            }
+
+            const galleryAssets = ensureArray(galleryAssetsRef.current);
+            if (galleryAssets.length) {
+              finalGalleryImages = [];
+              for (const asset of galleryAssets) {
+                if (!asset?.uri) continue;
+                const img = await normalizeImage(asset, {
+                  maxWidth: 820,
+                  compress: 0.5,
+                  maxChars: 260_000,
+                  maxIterations: 5
+                });
+                if (img) finalGalleryImages.push(img);
+              }
+            }
+
+            // Persistir la nueva compresión en el estado (para que al editar quede igual)
+            setStyleForm((s) => ({
+              ...s,
+              ...(finalBannerImage ? { bannerImage: finalBannerImage } : {}),
+              ...(Array.isArray(finalGalleryImages) ? { gallery: finalGalleryImages } : {})
+            }));
+          } catch (e) {
+            console.log('Auto-compress retry failed:', e);
+          }
+
+          styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(buildStylePayload(finalBannerImage, finalGalleryImages)) });
+        }
+
         if (!styleRes.res.ok) {
-          styleError = styleRes.data?.error || 'Error al guardar las imágenes.';
+          if (styleRes.res.status === 413 || /entity too large|request entity too large/i.test(String(styleRes.data?.error || ''))) {
+            styleError = 'Las imágenes aún son demasiado pesadas. El sistema intentó reducirlas automáticamente. Prueba con fotos más ligeras.';
+          } else {
+            styleError = styleRes.data?.error || 'Error al guardar las imágenes.';
+          }
           console.log('Style upload error:', styleError);
         }
 
         // Para que la rifa se vea en el listado público (/raffles), activar al crear.
-        if (isCreate) {
+        // Requisito: no activar si falló la subida de imágenes.
+        if (isCreate && !styleError) {
+          quickNotify('Publicando rifa...');
           const actRes = await api(`/admin/raffles/${raffleId}/activate`, { method: 'POST' });
           if (!actRes.res.ok) {
             activationError = actRes.data?.error || 'No se pudo activar la rifa.';
@@ -1270,7 +1558,14 @@ export default function AdminScreen({ api, user, modulesConfig }) {
         ]);
       }
     } else {
-      Alert.alert('Ups', data?.error || 'No se pudo guardar.');
+      if (res.status === 413 || /entity too large|request entity too large/i.test(String(data?.error || ''))) {
+        Alert.alert(
+          'Imágenes muy pesadas',
+          'La solicitud excede el límite del servidor. Usa fotos más ligeras (o recórtalas) y vuelve a intentarlo; la app las comprimirá automáticamente.'
+        );
+      } else {
+        Alert.alert('Ups', data?.error || 'No se pudo guardar.');
+      }
     }
     setSavingRaffle(false);
   };
@@ -1347,10 +1642,15 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const pickAnnouncementImage = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la galería.');
-    const result = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.7 });
+    const result = await ImagePicker.launchImageLibraryAsync({ base64: false, quality: 1, allowsEditing: false });
     if (!result.canceled && result.assets?.length) {
       const asset = result.assets[0];
-      setAnnouncementForm((s) => ({ ...s, imageUrl: `data:image/jpeg;base64,${asset.base64}` }));
+      try {
+        const processed = await uploadImageAsset(asset);
+        if (processed) setAnnouncementForm((s) => ({ ...s, imageUrl: processed }));
+      } catch (e) {
+        Alert.alert('Error', e?.message || 'No se pudo subir la imagen.');
+      }
     }
   };
 
@@ -1381,10 +1681,9 @@ export default function AdminScreen({ api, user, modulesConfig }) {
   const pickWinnerPhoto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
-      base64: true,
+      allowsEditing: false,
+      quality: 1,
+      base64: false,
     });
 
     if (!result.canceled) {
@@ -1403,9 +1702,20 @@ export default function AdminScreen({ api, user, modulesConfig }) {
     if (!winningNumberInput) return Alert.alert('Error', 'Ingresa el número ganador');
     
     setDeclaringWinner(true);
+
+    let proof = null;
+    if (winnerPhoto?.uri) {
+      try {
+        proof = await uploadImageAsset(winnerPhoto);
+      } catch (e) {
+        setDeclaringWinner(false);
+        return Alert.alert('Error', e?.message || 'No se pudo subir la foto del ganador.');
+      }
+    }
+
     const body = {
       winningNumber: winningNumberInput,
-      proof: winnerPhoto ? `data:image/jpeg;base64,${winnerPhoto.base64}` : null
+      proof
     };
 
     const { res, data } = await api(`/raffles/${winnerRaffleId}/declare-winner`, {
@@ -1485,6 +1795,120 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               </TouchableOpacity>
             )}
           </View>
+
+        {activeSection === 'reports' && (
+          <View style={{ flex: 1, paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+              <TouchableOpacity onPress={() => setActiveSection(null)} style={{ marginRight: 12 }}>
+                <Ionicons name="arrow-back" size={24} color="#fff" />
+              </TouchableOpacity>
+              <Text style={[styles.title, { marginBottom: 0 }]}>Reportes y Denuncias</Text>
+            </View>
+
+            {loadingReports ? (
+              <ActivityIndicator size="large" color={palette.primary} />
+            ) : (
+              <FlatList
+                data={reports}
+                keyExtractor={(item) => String(item.id)}
+                ListEmptyComponent={<Text style={styles.muted}>No hay reportes pendientes.</Text>}
+                renderItem={({ item }) => (
+                  <View style={[styles.card, { marginBottom: 12 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Ionicons name="alert-circle" size={20} color="#ef4444" />
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.category || 'Reporte'}</Text>
+                      </View>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+                    </View>
+                    
+                    <Text style={{ color: '#fff', marginBottom: 8 }}>{item.comment || 'Sin detalles.'}</Text>
+                    
+                    {item.raffle && (
+                      <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 8, borderRadius: 8, marginBottom: 12 }}>
+                        <Text style={{ color: palette.muted, fontSize: 12 }}>Rifa Reportada:</Text>
+                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{item.raffle.title}</Text>
+                        <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {item.raffle.id}</Text>
+                      </View>
+                    )}
+
+                    <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                      <TouchableOpacity 
+                        onPress={() => resolveReport(item.id, 'dismissed')}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12 }}>Desestimar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => resolveReport(item.id, 'resolved')}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef4444' }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Resolver (Ban/Borrar)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        )}
+
+        {activeSection === 'reports' && (
+          <View style={{ flex: 1, paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+              <TouchableOpacity onPress={() => setActiveSection(null)} style={{ marginRight: 12 }}>
+                <Ionicons name="arrow-back" size={24} color="#fff" />
+              </TouchableOpacity>
+              <Text style={[styles.title, { marginBottom: 0 }]}>Reportes y Denuncias</Text>
+            </View>
+
+            {loadingReports ? (
+              <ActivityIndicator size="large" color={palette.primary} />
+            ) : (
+              <FlatList
+                data={reports}
+                keyExtractor={(item) => String(item.id)}
+                ListEmptyComponent={<Text style={styles.muted}>No hay reportes pendientes.</Text>}
+                renderItem={({ item }) => (
+                  <View style={[styles.card, { marginBottom: 12 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Ionicons name="alert-circle" size={20} color="#ef4444" />
+                        <Text style={{ color: '#ef4444', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.category || 'Reporte'}</Text>
+                      </View>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</Text>
+                    </View>
+                    
+                    <Text style={{ color: '#fff', marginBottom: 8 }}>{item.comment || 'Sin detalles.'}</Text>
+                    
+                    {item.raffle && (
+                      <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 8, borderRadius: 8, marginBottom: 12 }}>
+                        <Text style={{ color: palette.muted, fontSize: 12 }}>Rifa Reportada:</Text>
+                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{item.raffle.title}</Text>
+                        <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {item.raffle.id}</Text>
+                      </View>
+                    )}
+
+                    <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                      <TouchableOpacity 
+                        onPress={() => resolveReport(item.id, 'dismissed')}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12 }}>Desestimar</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        onPress={() => resolveReport(item.id, 'resolved')}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef4444' }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Resolver (Ban/Borrar)</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        )}
 
         {activeSection === 'sa_users' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
@@ -2061,6 +2485,109 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 }
               />
             </View>
+        ) : activeSection === 'movements' ? (
+            <View style={{ flex: 1, paddingHorizontal: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Movimientos</Text>
+              </View>
+
+              <View style={{ marginBottom: 10 }}>
+                <Text style={styles.muted}>Lista de transacciones del sistema.</Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                <TextInput
+                  style={[styles.input, { flexGrow: 1, flexBasis: '55%', marginBottom: 0 }]}
+                  placeholder="Buscar (email, referencia...)"
+                  value={adminTxFilters.q}
+                  onChangeText={(v) => setAdminTxFilters(s => ({ ...s, q: v }))}
+                />
+                <View style={{ flexGrow: 1, flexBasis: '40%', flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={loadAdminTransactions}
+                    style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Actualizar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => { setAdminTxFilters({ status: '', q: '' }); setTimeout(loadAdminTransactions, 10); }}
+                    style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', padding: 12, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Text style={{ color: '#e2e8f0', fontWeight: '800' }}>Limpiar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+                {[
+                  { id: '', label: 'Todos' },
+                  { id: 'pending', label: 'Pendiente' },
+                  { id: 'approved', label: 'Aprobado' },
+                  { id: 'rejected', label: 'Rechazado' }
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.id || 'all'}
+                    onPress={() => setAdminTxFilters(s => ({ ...s, status: opt.id }))}
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: adminTxFilters.status === opt.id ? 'rgba(34,211,238,0.12)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: adminTxFilters.status === opt.id ? 'rgba(34,211,238,0.45)' : 'rgba(255,255,255,0.08)' }}
+                  >
+                    <Text style={{ color: adminTxFilters.status === opt.id ? '#22d3ee' : '#e2e8f0', fontWeight: '800' }}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {adminTxLoading ? (
+                <View style={{ paddingTop: 20, alignItems: 'center' }}>
+                  <ActivityIndicator color={palette.primary} />
+                  <Text style={[styles.muted, { marginTop: 8 }]}>Cargando movimientos...</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={adminTransactions}
+                  keyExtractor={(item) => String(item.id || Math.random())}
+                  renderItem={({ item: tx }) => {
+                    const status = String(tx?.status || 'pending').toLowerCase();
+                    const statusColor = status === 'approved' ? '#4ade80' : status === 'rejected' ? '#f87171' : '#fbbf24';
+                    return (
+                      <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>{tx?.type || 'movimiento'}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
+                            <Ionicons name={status === 'approved' ? 'checkmark-circle' : status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
+                            <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '800' }}>{status}</Text>
+                          </View>
+                        </View>
+
+                        <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                          {tx?.createdAt ? new Date(tx.createdAt).toLocaleString() : '—'}
+                          {tx?.raffleId ? ` • Rifa ID: ${tx.raffleId}` : ''}
+                        </Text>
+
+                        <View style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Usuario</Text>
+                            <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{tx?.user?.name || '—'}</Text>
+                            <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={1}>{tx?.user?.email || '—'}</Text>
+                            {tx?.reference ? (
+                              <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={1}>Ref: {tx.reference}</Text>
+                            ) : null}
+                          </View>
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={{ color: '#fff', fontWeight: '900' }}>{Number(tx?.amount || 0).toFixed(2)} {tx?.currency || 'USD'}</Text>
+                            {tx?.provider ? (
+                              <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={1}>{tx.provider}</Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  }}
+                  ListEmptyComponent={
+                    <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>No hay movimientos.</Text>
+                  }
+                />
+              )}
+            </View>
         ) : (
         <>
         <ScrollView contentContainerStyle={styles.scroll}>
@@ -2204,7 +2731,17 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 </TouchableOpacity>
               </View>
 
-              <TextInput style={styles.input} placeholder="Total tickets" value={raffleForm.totalTickets} onChangeText={(v) => setRaffleForm((s) => ({ ...s, totalTickets: v }))} keyboardType="numeric" />
+              <TextInput
+                style={styles.input}
+                placeholder="Total tickets"
+                value={raffleForm.totalTickets}
+                onChangeText={(v) => setRaffleForm((s) => ({ ...s, totalTickets: v }))}
+                keyboardType="numeric"
+                autoComplete="off"
+                importantForAutofill="no"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
               <TouchableOpacity
                 style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }]}
                 onPress={() => setStartPickerVisible(true)}
@@ -2241,12 +2778,16 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               
               <Text style={{ color: palette.secondary, fontWeight: 'bold', marginTop: 10, marginBottom: 4 }}>Premios Rápidos (Instant Wins)</Text>
               <Text style={{ color: palette.muted, fontSize: 12, marginBottom: 8 }}>Ingresa los números ganadores separados por coma (ej: 10, 50, 100)</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="Números ganadores instantáneos" 
-                value={raffleForm.instantWins} 
-                onChangeText={(v) => setRaffleForm((s) => ({ ...s, instantWins: v }))} 
-                keyboardType="numeric"
+              <TextInput
+                style={styles.input}
+                placeholder="Números ganadores instantáneos (ej: 10, 50, 100)"
+                value={raffleForm.instantWins}
+                onChangeText={(v) => setRaffleForm((s) => ({ ...s, instantWins: v }))}
+                keyboardType={Platform.OS === 'ios' ? 'numbers-and-punctuation' : 'default'}
+                autoComplete="off"
+                importantForAutofill="no"
+                autoCorrect={false}
+                autoCapitalize="none"
               />
 
               <Text style={{ color: palette.secondary, fontWeight: 'bold', marginTop: 10, marginBottom: 4 }}>Términos y Condiciones</Text>
@@ -2270,7 +2811,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
               </TouchableOpacity>
               {styleForm.bannerImage ? (
                 <View style={{ position: 'relative', marginBottom: 12 }}>
-                  <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)' }} resizeMode="cover" />
+                  <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 8, backgroundColor: '#000' }} resizeMode="contain" />
                   <TouchableOpacity 
                     onPress={() => setStyleForm(s => ({ ...s, bannerImage: '' }))}
                     style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 6 }}
@@ -2344,7 +2885,17 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                     <Text style={{ color: palette.muted, marginBottom: 8, fontSize: 12 }}>Datos actuales (se actualizarán en tu perfil al guardar):</Text>
                     <TextInput style={styles.input} placeholder="Banco (Ej: Venezuela)" value={bankSettings.bankName} onChangeText={(v) => setBankSettings(s => ({ ...s, bankName: v }))} />
                     <TextInput style={styles.input} placeholder="Cédula (V-12345678)" value={bankSettings.cedula} onChangeText={(v) => setBankSettings(s => ({ ...s, cedula: v }))} />
-                    <TextInput style={styles.input} placeholder="Teléfono (0412...)" value={bankSettings.phone} onChangeText={(v) => setBankSettings(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Teléfono (0412...)"
+                      value={bankSettings.phone}
+                      onChangeText={(v) => setBankSettings(s => ({ ...s, phone: v }))}
+                      keyboardType="phone-pad"
+                      autoComplete="off"
+                      importantForAutofill="no"
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
                     <TextInput style={styles.input} placeholder="Titular" value={bankSettings.accountName} onChangeText={(v) => setBankSettings(s => ({ ...s, accountName: v }))} />
                   </View>
                 )}
@@ -2582,7 +3133,7 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                 <Ionicons name="image-outline" size={18} color={palette.primary} />
                 <Text style={[styles.secondaryText, { marginLeft: 8 }]}>{announcementForm.imageUrl ? 'Cambiar Imagen' : 'Adjuntar Imagen'}</Text>
               </TouchableOpacity>
-              {announcementForm.imageUrl && <Image source={{ uri: announcementForm.imageUrl }} style={{ width: '100%', height: 150, borderRadius: 8, marginBottom: 12 }} />}
+              {announcementForm.imageUrl && <Image source={{ uri: announcementForm.imageUrl }} style={{ width: '100%', height: 150, borderRadius: 8, marginBottom: 12, backgroundColor: '#000' }} resizeMode="contain" />}
 
               <FilledButton title={savingAnnouncement ? 'Publicando...' : 'Publicar Noticia'} onPress={createAnnouncement} loading={savingAnnouncement} disabled={savingAnnouncement} icon={<Ionicons name="newspaper-outline" size={18} color="#fff" />} />
               
@@ -2921,8 +3472,19 @@ export default function AdminScreen({ api, user, modulesConfig }) {
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
                   <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
-                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Mi Cuenta</Text>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Perfil</Text>
               </View>
+
+              <Text style={styles.section}>Legal</Text>
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12 }}
+                onPress={() => navigation.navigate('Legal')}
+              >
+                <Ionicons name="document-text-outline" size={22} color={palette.primary} />
+                <Text style={{ color: palette.text, marginLeft: 12, fontSize: 16 }}>Términos, Privacidad y Marco Legal</Text>
+                <Ionicons name="chevron-forward" size={20} color={palette.muted} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.rowBetween} onPress={() => setShowPassword(!showPassword)}>
                 <Text style={styles.section}>Seguridad</Text>
                 <Ionicons name={showPassword ? "chevron-up" : "chevron-down"} size={20} color={palette.text} />
@@ -2954,6 +3516,20 @@ export default function AdminScreen({ api, user, modulesConfig }) {
                   />
                 </View>
               )}
+
+              <View style={{ marginTop: 18, gap: 12 }}>
+                <FilledButton
+                  title="Cerrar sesión"
+                  onPress={typeof onLogout === 'function' ? onLogout : undefined}
+                  style={{ backgroundColor: '#ef4444' }}
+                  icon={<Ionicons name="log-out-outline" size={18} color="#fff" />}
+                />
+                <TouchableOpacity onPress={deleteAccount} style={{ padding: 12, alignItems: 'center' }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 14, textDecorationLine: 'underline' }}>
+                    Eliminar cuenta
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
 

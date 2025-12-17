@@ -26,6 +26,7 @@ export default function WalletScreen({ api }) {
   const [payments, setPayments] = useState([]);
   const [topupAmount, setTopupAmount] = useState('');
   const [showTopup, setShowTopup] = useState(false);
+  const [topupProvider, setTopupProvider] = useState('mobile_payment');
   
   const toast = typeof useToast === 'function' ? useToast() : null;
   const showToast = (msg, type = 'info') => {
@@ -58,9 +59,14 @@ export default function WalletScreen({ api }) {
     if (!topupAmount || Number.isNaN(amount) || amount <= 0) {
       return showToast('Monto inválido', 'error');
     }
+
+    if (!topupProvider) {
+      return showToast('Selecciona un método de recarga', 'error');
+    }
+
     const { res, data } = await api('/wallet/topup', {
       method: 'POST',
-      body: JSON.stringify({ amount })
+      body: JSON.stringify({ amount, provider: topupProvider })
     });
     if (res.ok) {
       showToast('Recarga exitosa', 'success');
@@ -71,71 +77,90 @@ export default function WalletScreen({ api }) {
       showToast(data?.error || 'Error al recargar', 'error');
       if (TEST_MODE_TOPUP) {
         const now = new Date().toISOString();
+        const providerLabel = topupProvider === 'mobile_payment'
+          ? 'Pago móvil'
+          : topupProvider === 'transfer'
+            ? 'Transferencia'
+            : topupProvider === 'zelle'
+              ? 'Zelle'
+              : topupProvider === 'binance'
+                ? 'Binance'
+                : topupProvider;
         const fallbackMovement = {
-          id: `local-${Date.now()}`,
-          type: 'deposit',
-          amount,
-          status: 'approved',
-          createdAt: now,
-          reference: 'SIMULADO-TEST'
-        };
-        setBalance((b) => b + amount);
-        setMovements((m) => [fallbackMovement, ...m]);
-        setTopupAmount('');
-        setShowTopup(false);
-        showToast('Recarga simulada (modo prueba)', 'success');
-      }
-    }
-  };
+          {showTopup && (
+            <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+              <View style={styles.rowBetween}>
+                <Text style={{ color: '#e2e8f0', marginBottom: 10, fontWeight: '900' }}>Recarga</Text>
+                <Text style={[styles.muted, { fontSize: 12, marginBottom: 10 }]}>Selecciona método y monto</Text>
+              </View>
 
-  useFocusEffect(
-    useCallback(() => {
-      loadWallet();
-    }, [loadWallet])
-  );
+              <Text style={[styles.muted, { fontSize: 12, marginBottom: 8 }]}>Método</Text>
 
-  return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <LinearGradient
-        colors={[palette.background, '#0f172a', '#1e1b4b']}
-        style={{ flex: 1 }}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Text style={styles.title}>Wallet</Text>
+              [{
+                id: 'mobile_payment',
+                label: 'Pago móvil',
+                icon: 'phone-portrait-outline',
+                hint: 'Transferencia móvil'
+              }, {
+                id: 'transfer',
+                label: 'Transferencia',
+                icon: 'card-outline',
+                hint: 'Transferencia bancaria'
+              }, {
+                id: 'zelle',
+                label: 'Zelle',
+                icon: 'cash-outline',
+                hint: 'Pago internacional'
+              }, {
+                id: 'binance',
+                label: 'Binance',
+                icon: 'logo-bitcoin',
+                hint: 'Cripto / Binance'
+              }].map((opt) => {
+                const active = topupProvider === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    onPress={() => setTopupProvider(opt.id)}
+                    activeOpacity={0.85}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 14,
+                      marginBottom: 8,
+                      backgroundColor: active ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.06)',
+                      borderWidth: 1,
+                      borderColor: active ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.10)'
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 14,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: active ? 'rgba(124,58,237,0.22)' : 'rgba(255,255,255,0.06)',
+                        borderWidth: 1,
+                        borderColor: active ? 'rgba(124,58,237,0.40)' : 'rgba(255,255,255,0.10)'
+                      }}
+                    >
+                      <Ionicons name={opt.icon} size={18} color={active ? palette.primary : '#e2e8f0'} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '900' }}>{opt.label}</Text>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>{opt.hint}</Text>
+                    </View>
+                    <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={active ? '#4ade80' : '#94a3b8'} />
+                  </TouchableOpacity>
+                );
+              })}
 
-        <View style={styles.balanceCard}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <View>
-              <Text style={styles.section}>Saldo disponible</Text>
-              <Text style={styles.balanceValue}>{formatMoneyVES(balance)}</Text>
-            </View>
-            <View style={styles.circleAccent}>
-              <Ionicons name="wallet-outline" size={22} color="#fbbf24" />
-            </View>
-          </View>
-          <View style={styles.ctaRow}>
-            <TouchableOpacity style={styles.ctaButtonPrimary} onPress={() => setShowTopup(!showTopup)} activeOpacity={0.9}>
-              <Ionicons name="add" size={18} color="#0b1224" />
-              <Text style={styles.ctaButtonPrimaryText}>Recargar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.ctaButtonGhost}
-              activeOpacity={0.9}
-              onPress={() => {
-                Alert.alert(
-                  'Retirar saldo',
-                  'Para solicitar un retiro, contáctanos por WhatsApp con el monto y tus datos de pago.',
-                  [
-                    { text: 'Cancelar', style: 'cancel' },
-                    {
-                      text: 'Abrir WhatsApp',
-                      onPress: () => {
-                        Linking.openURL('https://wa.me/584227930168');
-                      }
-                    }
-                  ]
+              <Text style={[styles.muted, { fontSize: 12, marginTop: 6, marginBottom: 8 }]}>Monto (Bs.)</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
                 );
               }}
             >
@@ -149,9 +174,70 @@ export default function WalletScreen({ api }) {
           </View>
 
           {showTopup && (
+<<<<<<< HEAD
             <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12 }}>
               <Text style={{ color: '#e2e8f0', marginBottom: 8, fontWeight: '700' }}>Monto a recargar (Bs.)</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
+=======
+            <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+              <View style={styles.rowBetween}>
+                <Text style={{ color: '#e2e8f0', marginBottom: 10, fontWeight: '900' }}>Recarga</Text>
+                <Text style={[styles.muted, { fontSize: 12, marginBottom: 10 }]}>Selecciona método y monto</Text>
+              </View>
+
+              <Text style={[styles.muted, { fontSize: 12, marginBottom: 8 }]}>Método</Text>
+
+              {[
+                { id: 'mobile_payment', label: 'Pago móvil', icon: 'phone-portrait-outline', hint: 'Transferencia móvil' },
+                { id: 'transfer', label: 'Transferencia', icon: 'card-outline', hint: 'Transferencia bancaria' },
+                { id: 'zelle', label: 'Zelle', icon: 'cash-outline', hint: 'Pago internacional' },
+                { id: 'binance', label: 'Binance', icon: 'logo-bitcoin', hint: 'Cripto / Binance' }
+              ].map((opt) => {
+                const active = topupProvider === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    onPress={() => setTopupProvider(opt.id)}
+                    activeOpacity={0.85}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 12,
+                      paddingHorizontal: 12,
+                      borderRadius: 14,
+                      marginBottom: 8,
+                      backgroundColor: active ? 'rgba(124,58,237,0.16)' : 'rgba(255,255,255,0.06)',
+                      borderWidth: 1,
+                      borderColor: active ? 'rgba(124,58,237,0.45)' : 'rgba(255,255,255,0.10)'
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 14,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: active ? 'rgba(124,58,237,0.22)' : 'rgba(255,255,255,0.06)',
+                        borderWidth: 1,
+                        borderColor: active ? 'rgba(124,58,237,0.40)' : 'rgba(255,255,255,0.10)'
+                      }}
+                    >
+                      <Ionicons name={opt.icon} size={18} color={active ? palette.primary : '#e2e8f0'} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '900' }}>{opt.label}</Text>
+                      <Text style={{ color: palette.muted, fontSize: 12 }}>{opt.hint}</Text>
+                    </View>
+                    <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={active ? '#4ade80' : '#94a3b8'} />
+                  </TouchableOpacity>
+                );
+              })}
+
+              <Text style={[styles.muted, { fontSize: 12, marginTop: 6, marginBottom: 8 }]}>Monto (Bs.)</Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+>>>>>>> 1204166 (fix: admin parse + public profile preview)
                 <TextInput 
                   style={[styles.input, { flex: 1, marginBottom: 0 }]} 
                   placeholder="0.00" 
@@ -159,10 +245,18 @@ export default function WalletScreen({ api }) {
                   value={topupAmount}
                   onChangeText={setTopupAmount}
                 />
-                <TouchableOpacity onPress={handleTopup} style={{ backgroundColor: '#10b981', borderRadius: 12, paddingHorizontal: 16, justifyContent: 'center' }}>
-                  <Ionicons name="checkmark" size={24} color="#fff" />
-                </TouchableOpacity>
               </View>
+
+              <TouchableOpacity
+                onPress={handleTopup}
+                activeOpacity={0.9}
+                style={[styles.primaryButton, { marginTop: 10 }]}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
+                  <Text style={styles.primaryButtonText}>Confirmar recarga</Text>
+                </View>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -194,9 +288,32 @@ export default function WalletScreen({ api }) {
                     <View style={[styles.movementBadge, { backgroundColor: m.type === 'deposit' ? 'rgba(16,185,129,0.15)' : 'rgba(248,113,113,0.15)', borderColor: m.type === 'deposit' ? 'rgba(16,185,129,0.35)' : 'rgba(248,113,113,0.35)' }]}> 
                       <Ionicons name={m.type === 'deposit' ? 'arrow-up' : 'arrow-down'} size={16} color={m.type === 'deposit' ? '#10b981' : '#f87171'} />
                     </View>
-                    <View>
-                      <Text style={styles.itemTitle}>{m.reference || (m.type === 'deposit' ? 'Recarga' : 'Compra')}</Text>
-                      <Text style={styles.muted}>{new Date(m.createdAt).toLocaleDateString()} · {m.type === 'deposit' ? 'Entrada' : 'Salida'}</Text>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={styles.itemTitle}>{m.type === 'deposit' ? 'Recarga' : 'Movimiento'}</Text>
+
+                      {m.reference ? (
+                        <Text style={styles.muted} numberOfLines={1} ellipsizeMode="tail">
+                          {m.reference}
+                        </Text>
+                      ) : null}
+
+                      {(() => {
+                        const p = String(m?.provider || '').trim().toLowerCase();
+                        const providerLabel =
+                          p === 'mobile_payment'
+                            ? 'Pago móvil'
+                            : p === 'transfer'
+                              ? 'Transferencia'
+                              : p === 'zelle'
+                                ? 'Zelle'
+                                : p === 'binance'
+                                  ? 'Binance'
+                                  : p;
+
+                        const base = `${new Date(m.createdAt).toLocaleDateString()} · ${m.type === 'deposit' ? 'Entrada' : 'Salida'}`;
+                        const extra = providerLabel ? ` · ${providerLabel}` : '';
+                        return <Text style={styles.muted}>{base}{extra}</Text>;
+                      })()}
                     </View>
                   </View>
                   <View style={{ alignItems: 'flex-end' }}>
@@ -216,15 +333,36 @@ export default function WalletScreen({ api }) {
           {payments.length === 0 ? <Text style={styles.muted}>No tienes pagos registrados.</Text> : null}
           {payments.map((p) => {
             const amount = p.amount ?? p.total ?? (p.price && p.quantity ? Number(p.price) * Number(p.quantity) : null);
+            const status = String(p.status || 'pendiente');
+            const isApproved = status === 'approved';
+            const isPending = status === 'pending';
+
+            const prov = String(p?.provider || '').trim().toLowerCase();
+            const providerLabel =
+              prov === 'mobile_payment'
+                ? 'Pago móvil'
+                : prov === 'transfer'
+                  ? 'Transferencia'
+                  : prov === 'zelle'
+                    ? 'Zelle'
+                    : prov === 'binance'
+                      ? 'Binance'
+                      : prov;
+
             return (
-              <View key={p.id || p.reference} style={styles.receiptCard}>
-                <View style={styles.rowBetween}>
+              <View key={p.id || p.reference} style={styles.movementRow}>
+                <View style={{ flex: 1, paddingRight: 10 }}>
                   <Text style={styles.itemTitle}>{p.raffleTitle || p.raffleId || 'Pago'}</Text>
-                  <Text style={styles.ghostPill}>{p.status || 'pendiente'}</Text>
+                  <Text style={styles.muted}>
+                    {new Date(p.createdAt).toLocaleDateString()}
+                    {providerLabel ? ` · ${providerLabel}` : ''}
+                  </Text>
+                  {p.reference ? <Text style={styles.muted}>Ref: {p.reference}</Text> : null}
                 </View>
-                <Text style={styles.muted}>Ref: {p.reference || '—'}</Text>
-                <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(amount || 0)}</Text>
-                <Text style={styles.muted}>{new Date(p.createdAt).toLocaleDateString()}</Text>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={{ color: '#fbbf24', fontWeight: '800' }}>{formatMoneyVES(amount || 0)}</Text>
+                  <Text style={[styles.statusPill, isApproved ? styles.statusApproved : isPending ? styles.statusPending : styles.statusRejected]}>{status}</Text>
+                </View>
               </View>
             );
           })}

@@ -29,6 +29,18 @@ const formatMoney = (value) => {
   return n.toFixed(2);
 };
 
+const LEMAS = [
+  "¡La suerte está contigo hoy!", "Confía en tu número, brilla fuerte.", "Hoy puede ser tu gran día.",
+  "La esperanza siempre gana.", "Tu ticket guarda una sorpresa.", "El destino sonríe a los valientes.",
+  "Cada número es una oportunidad.", "La fortuna favorece a los soñadores.", "Tu suerte está en camino.",
+  "El éxito comienza con la confianza.", "Este ticket puede cambiar tu vida.", "La suerte se construye con fe.",
+  "Tu número tiene energía positiva.", "La fortuna está más cerca de lo que piensas.", "Confía, tu momento llegará.",
+  "El azar premia a los persistentes.", "Tu ticket es un símbolo de esperanza.", "La suerte siempre encuentra su camino.",
+  "Hoy tu número puede ser el ganador.", "La magia de la rifa está contigo."
+];
+
+const getRandomLema = () => LEMAS[Math.floor(Math.random() * LEMAS.length)];
+
 export default function MyRafflesScreen({ api, navigation }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -158,18 +170,24 @@ export default function MyRafflesScreen({ api, navigation }) {
           </View>
 
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
-            {raffle && raffle.id ? (
-              <TouchableOpacity
-                onPress={() => navigation.navigate('RaffleDetail', { raffle, ticket: item })}
-                style={{ flexDirection: 'row', alignItems: 'center' }}
-              >
-                <Text style={{ color: palette.primary, fontWeight: '900', fontSize: 13, marginRight: 4 }}>Ver detalles</Text>
-                <Ionicons name="chevron-forward" size={14} color={palette.primary} />
-              </TouchableOpacity>
-            ) : (
-              <Text style={[styles.muted, { fontSize: 12 }]}>No disponible</Text>
-            )}
-          </View>
+              {raffle && raffle.id ? (
+                <TouchableOpacity
+                  onPress={() => navigation.navigate('RaffleDetail', { raffle, ticket: item })}
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                >
+                  <Text style={{ color: palette.primary, fontWeight: '900', fontSize: 13, marginRight: 4 }}>Ver detalles</Text>
+                  <Ionicons name="chevron-forward" size={14} color={palette.primary} />
+                </TouchableOpacity>
+              ) : (
+                <Text style={[styles.muted, { fontSize: 12 }]}>No disponible</Text>
+              )}
+            </View>
+            
+            <View style={{ marginTop: 12, alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(15,23,42,0.06)', paddingTop: 8 }}>
+              <Text style={{ color: palette.primary, fontSize: 11, fontStyle: 'italic', fontWeight: '600' }}>
+                "{getRandomLema()}"
+              </Text>
+            </View>
         </View>
       </View>
     );

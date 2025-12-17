@@ -26,15 +26,23 @@ const { width } = Dimensions.get('window');
 
 export default function RaffleDetailScreen({ route, navigation, api }) {
   const { raffle, ticket } = route.params || {};
+  const getMinTickets = (r) => {
+    const raw = r?.minTickets ?? r?.style?.minTickets;
+    const n = Number(raw);
+    const parsed = Number.isFinite(n) ? Math.floor(n) : 1;
+    return Math.max(1, parsed);
+  };
+
   // Local state to hold the raffle data, initialized with param but updatable
   const [current, setCurrent] = useState(raffle || {});
-  const [quantity, setQuantity] = useState('1');
+  const [quantity, setQuantity] = useState(String(getMinTickets(raffle || {})));
   const [buying, setBuying] = useState(false);
   const [manualRef, setManualRef] = useState('');
   const [manualNote, setManualNote] = useState('');
   const [manualProof, setManualProof] = useState(null);
   const [manualLoading, setManualLoading] = useState(false);
   const [paymentStep, setPaymentStep] = useState(1);
+  const [manualProvider, setManualProvider] = useState('');
   const [assignedNumbers, setAssignedNumbers] = useState([]);
   const numbersAnim = useRef(new Animated.Value(0)).current;
   const [supportVisible, setSupportVisible] = useState(false);
@@ -51,6 +59,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const themeColor = style?.themeColor || palette.primary;
   const [viewProfileId, setViewProfileId] = useState(null);
   const [termsVisible, setTermsVisible] = useState(false);
+  const [riferoRating, setRiferoRating] = useState(null);
+  const [mySecurityId, setMySecurityId] = useState('');
   const userDisplayName = current?.user?.name || current?.user?.firstName || 'MegaRifas Oficial';
   const userInitial = (String(userDisplayName).trim().charAt(0) || 'M').toUpperCase();
   const totalTickets = current?.totalTickets || stats?.total || 0;
@@ -60,6 +70,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const safeSecurityId = typeof current?.user?.securityId === 'string' ? current.user.securityId : '';
   const safeAvatarUri = typeof current?.user?.avatar === 'string' && current.user.avatar.trim().length > 0 ? current.user.avatar : null;
   const ticketNumber = ticket?.number ?? (Array.isArray(ticket?.numbers) ? ticket.numbers[0] : ticket?.numbers);
+  const userBoostActive = !!current?.user?.isBoosted;
+  const boostEndsAt = current?.user?.boostEndsAt ? Date.parse(current.user.boostEndsAt) : 0;
 
   // Fetch full raffle details if missing critical data
   useEffect(() => {
@@ -75,7 +87,14 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     }
   }, [current?.id, api]);
 
+  // Asegura que la cantidad nunca quede por debajo del mínimo del rifero
   useEffect(() => {
+    const min = getMinTickets(current);
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty < min) {
+      setQuantity(String(min));
+    }
+  }, [current, quantity]);
     if (!api || !current?.id) return;
     api(`/raffles/${current.id}/payment-details`).then(({ res, data }) => {
       if (!res.ok) return;
@@ -84,6 +103,35 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
       if (data?.bankDetails) setBankDetails(data.bankDetails);
     });
   }, [api, current?.id]);
+
+  useEffect(() => {
+    // Método por defecto: el primero seleccionado por el rifero (si existe)
+    const supported = new Set(['mobile_payment', 'zelle', 'binance', 'transfer']);
+    const list = Array.isArray(sellerPaymentMethods) ? sellerPaymentMethods : [];
+    const first = list.find((m) => supported.has(String(m)));
+    if (!manualProvider && first) setManualProvider(String(first));
+  }, [sellerPaymentMethods, manualProvider]);
+
+  useEffect(() => {
+    const riferoId = current?.user?.id;
+    if (!api || !riferoId) return;
+    api(`/users/public/${riferoId}/rating-summary`)
+      .then(({ res, data }) => {
+        if (res.ok) setRiferoRating(data);
+      })
+      .catch(() => {});
+  }, [api, current?.user?.id]);
+
+  useEffect(() => {
+    if (!api) return;
+    api('/me')
+      .then(({ res, data }) => {
+        if (!res.ok) return;
+        const sid = data?.securityId || data?.publicId || data?.id || '';
+        if (typeof sid === 'string') setMySecurityId(sid);
+      })
+      .catch(() => {});
+  }, [api]);
 
   if (!current || !current.id) {
     return (
@@ -96,9 +144,42 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     );
   }
 
+  const [showPurchase, setShowPurchase] = useState(false);
+  
+  // Report System
+  const [reportVisible, setReportVisible] = useState(false);
+  const [reportReason, setReportReason] = useState('fraud');
+  const [reportComment, setReportComment] = useState('');
+  const [reporting, setReporting] = useState(false);
+
+  const submitReport = async () => {
+    if (!reportComment.trim()) return Alert.alert('Detalles requeridos', 'Por favor describe brevemente el motivo del reporte.');
+    
+    setReporting(true);
+    const { res, data } = await api('/reports', {
+      method: 'POST',
+      body: JSON.stringify({
+        raffleId: current.id,
+        category: reportReason,
+        comment: reportComment
+      })
+    });
+    setReporting(false);
+
+    if (res.ok) {
+      setReportVisible(false);
+      setReportComment('');
+      Alert.alert('Reporte enviado', 'Gracias por ayudarnos a mantener la comunidad segura. Revisaremos este caso.');
+    } else {
+      Alert.alert('Error', data.error || 'No se pudo enviar el reporte.');
+    }
+  };
+
   const purchase = async () => {
+    const min = getMinTickets(current);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
+    if (qty < min) return Alert.alert('Cantidad invalida', `La compra mínima para esta rifa es ${min}.`);
     
     setBuying(true);
     const { res, data } = await api(`/raffles/${current.id}/purchase`, {
@@ -131,14 +212,20 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   };
 
   const submitManualPayment = async () => {
+    const min = getMinTickets(current);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
+    if (qty < min) return Alert.alert('Cantidad invalida', `La compra mínima para esta rifa es ${min}.`);
+    if (sellerPaymentMethods?.length && !manualProvider) {
+      return Alert.alert('Método requerido', 'Selecciona un método de pago antes de enviar el comprobante.');
+    }
     if (!manualProof?.base64) return Alert.alert('Falta comprobante', 'Adjunta la captura del pago.');
     setManualLoading(true);
     const { res, data } = await api(`/raffles/${current.id}/manual-payments`, {
       method: 'POST',
       body: JSON.stringify({
         quantity: qty,
+        provider: manualProvider,
         reference: manualRef,
         note: manualNote,
         proof: `data:image/jpeg;base64,${manualProof.base64}`
@@ -159,6 +246,73 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity onPress={() => setReportVisible(true)} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}>
+              <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Report Modal */}
+        <Modal visible={reportVisible} transparent animationType="fade" onRequestClose={() => setReportVisible(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 16, padding: 20 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>Reportar Rifa</Text>
+                <TouchableOpacity onPress={() => setReportVisible(false)}>
+                  <Ionicons name="close" size={24} color={palette.muted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ color: palette.muted, marginBottom: 12 }}>Selecciona el motivo:</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+                {[
+                  { id: 'fraud', label: 'Posible Fraude' },
+                  { id: 'inappropriate', label: 'Inapropiado' },
+                  { id: 'spam', label: 'Spam' },
+                  { id: 'other', label: 'Otro' }
+                ].map((opt) => (
+                  <TouchableOpacity
+                    key={opt.id}
+                    onPress={() => setReportReason(opt.id)}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 20,
+                      backgroundColor: reportReason === opt.id ? palette.primary : 'rgba(255,255,255,0.06)',
+                      borderWidth: 1,
+                      borderColor: reportReason === opt.id ? palette.primary : 'rgba(255,255,255,0.1)'
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={{ color: palette.muted, marginBottom: 8 }}>Detalles adicionales:</Text>
+              <TextInput
+                style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+                placeholder="Describe el problema..."
+                placeholderTextColor={palette.muted}
+                multiline
+                value={reportComment}
+                onChangeText={setReportComment}
+              />
+
+              <FilledButton
+                title={reporting ? 'Enviando...' : 'Enviar Reporte'}
+                onPress={submitReport}
+                disabled={reporting}
+                style={{ marginTop: 16, backgroundColor: '#ef4444' }}
+              />
+            </View>
+          </View>
+        </Modal>
+
         {safeGallery.length > 0 ? (
           <View style={{ height: 260, marginBottom: 16 }}>
             <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
@@ -233,6 +387,30 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                 <Ionicons name="shield-checkmark" size={12} color="#fbbf24" style={{ marginRight: 4 }} />
                 <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '600' }}>ID: {safeSecurityId ? safeSecurityId.slice(-8).toUpperCase() : 'VERIFICADO'}</Text>
               </View>
+
+              {(riferoRating?.count || riferoRating?.avgScore != null || userBoostActive) ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginTop: 6 }}>
+                  {riferoRating && (riferoRating.count || riferoRating.avgScore != null) ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                      <Ionicons name="star" size={12} color="#fbbf24" />
+                      <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '900' }}>
+                        {riferoRating.avgScore == null ? '—' : Number(riferoRating.avgScore).toFixed(1)}/10
+                      </Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }}>({riferoRating.count || 0})</Text>
+                    </View>
+                  ) : null}
+
+                  {userBoostActive && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(251, 191, 36, 0.12)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.35)' }}>
+                      <Ionicons name="flash" size={12} color="#fbbf24" />
+                      <Text style={{ color: '#fbbf24', fontSize: 12, fontWeight: '900' }}>PROMOCIONADO</Text>
+                      {boostEndsAt ? (
+                        <Text style={{ color: '#fde68a', fontSize: 11 }}>· {new Date(boostEndsAt).toLocaleDateString()}</Text>
+                      ) : null}
+                    </View>
+                  )}
+                </View>
+              ) : null}
             </View>
             <View style={{ flex: 1, alignItems: 'flex-end' }}>
                <Ionicons name="chevron-forward" size={20} color="#64748b" />
@@ -268,13 +446,14 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           <TextInput style={styles.input} value={quantity} onChangeText={setQuantity} keyboardType="numeric" placeholder="Cantidad (Aleatoria)" />
 
           {(!style.paymentMethods || style.paymentMethods.includes('wallet')) && (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <OutlineButton title={buying ? 'Procesando...' : 'Comprar con Saldo'} onPress={purchase} disabled={buying} icon={<Ionicons name="wallet-outline" size={18} color={themeColor} />} />
+              <OutlineButton title={showPurchase ? 'Ocultar Pago Manual' : 'Pago Manual'} onPress={() => setShowPurchase(!showPurchase)} icon={<Ionicons name="cash-outline" size={18} color={themeColor} />} />
             </View>
           )}
         </View>
 
-          {(!sellerPaymentMethods.length || sellerPaymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m))) && (
+          {(!sellerPaymentMethods.length || sellerPaymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m))) && showPurchase && (
         <View style={styles.card}>
           <View style={styles.sectionRow}>
             <Text style={[styles.section, { color: themeColor }]}>Pago manual guiado</Text>
@@ -285,18 +464,73 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           </View>
           <Text style={styles.muted}>2 pasos: completa datos y sube comprobante. Asignamos números aleatorios 1-10000 tras validar.</Text>
 
-          {sellerPaymentMethods.length ? (
-            <View style={{ marginTop: 10 }}>
-              <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 6 }}>Métodos aceptados:</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                {sellerPaymentMethods.map((m) => (
-                  <View key={String(m)} style={[styles.pill, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
-                    <Text style={{ color: '#fff', fontWeight: '700' }}>{String(m)}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          ) : null}
+          <View style={{ marginTop: 10 }}>
+            <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 8 }}>Métodos aceptados:</Text>
+            {(() => {
+              const supported = ['mobile_payment', 'transfer', 'zelle', 'binance'];
+              const list = Array.isArray(sellerPaymentMethods) && sellerPaymentMethods.length
+                ? sellerPaymentMethods.map((m) => String(m))
+                : supported;
+              const visible = list.filter((m) => supported.includes(m));
+              return (
+                <View>
+                  {visible.map((id) => {
+                    const meta =
+                      id === 'mobile_payment'
+                        ? { label: 'Pago móvil', icon: 'phone-portrait-outline', hint: 'Transferencia móvil' }
+                        : id === 'transfer'
+                          ? { label: 'Transferencia', icon: 'card-outline', hint: 'Transferencia bancaria' }
+                          : id === 'zelle'
+                            ? { label: 'Zelle', icon: 'cash-outline', hint: 'Pago internacional' }
+                            : { label: 'Binance', icon: 'logo-bitcoin', hint: 'Cripto / Binance' };
+                    const active = manualProvider === id;
+                    return (
+                      <TouchableOpacity
+                        key={id}
+                        onPress={() => {
+                          setManualProvider(id);
+                          setPaymentStep(1);
+                        }}
+                        activeOpacity={0.85}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingVertical: 12,
+                          paddingHorizontal: 12,
+                          borderRadius: 14,
+                          marginBottom: 8,
+                          backgroundColor: active ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.06)',
+                          borderWidth: 1,
+                          borderColor: active ? palette.primary : 'rgba(255,255,255,0.10)'
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: 14,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            backgroundColor: active ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.06)',
+                            borderWidth: 1,
+                            borderColor: active ? palette.primary : 'rgba(255,255,255,0.10)'
+                          }}
+                        >
+                          <Ionicons name={meta.icon} size={18} color={active ? palette.primary : '#e2e8f0'} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: '#fff', fontWeight: '900' }}>{meta.label}</Text>
+                          <Text style={{ color: palette.muted, fontSize: 12 }}>{meta.hint}</Text>
+                        </View>
+                        <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={active ? '#4ade80' : '#94a3b8'} />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              );
+            })()}
+          </View>
           
           {bankDetails && (
             <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 8, marginVertical: 8 }}>
@@ -332,7 +566,18 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
           {paymentStep === 1 ? (
             <>
-              <TextInput style={styles.input} value={manualRef} onChangeText={setManualRef} placeholder="Referencia (últimos 4 dígitos)" />
+              <TextInput
+                style={styles.input}
+                value={manualRef}
+                onChangeText={setManualRef}
+                placeholder={
+                  manualProvider === 'binance'
+                    ? 'TxID / Hash'
+                    : manualProvider === 'zelle'
+                      ? 'Confirmación / Referencia'
+                      : 'Referencia (últimos 4 dígitos)'
+                }
+              />
               <TextInput style={styles.input} value={manualNote} onChangeText={setManualNote} placeholder="Nota (opcional)" />
               <OutlineButton
                 title="Continuar"
@@ -350,7 +595,9 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                 ⚠️ Importante: La captura debe mostrar claramente la FECHA y la REFERENCIA del pago.
               </Text>
               {manualProof?.uri ? <Image source={{ uri: manualProof.uri }} style={styles.proofImage} /> : <Text style={styles.muted}>Aún no has seleccionado imagen.</Text>}
-              <Text style={styles.muted}>Cantidad: {quantity} · Ref: {manualRef || '—'}</Text>
+              <Text style={styles.muted}>
+                Método: {manualProvider || '—'} · Cantidad: {quantity} · Ref: {manualRef || '—'}
+              </Text>
               <FilledButton
                 title={manualLoading ? 'Enviando...' : 'Enviar comprobante'}
                 onPress={submitManualPayment}
@@ -376,6 +623,9 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                 #{formatTicketNumber(ticketNumber, current.digits)}
               </Text>
               <Text style={{ color: palette.muted, fontSize: 12 }}>Serial: {ticket.serialNumber}</Text>
+              {mySecurityId ? (
+                <Text style={{ color: palette.muted, fontSize: 12 }}>ID comprador: {mySecurityId}</Text>
+              ) : null}
             </View>
           </View>
         )}

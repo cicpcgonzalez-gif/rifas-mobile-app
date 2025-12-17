@@ -74,7 +74,11 @@ export default function WinnersScreen({ api }) {
             {filteredWinners.map((w) => (
               <View key={w.id} style={[styles.card, { marginBottom: 16 }]}>
                 {w.photoUrl ? (
-                  <Image source={{ uri: w.photoUrl }} style={{ width: '100%', height: 250, borderRadius: 12, marginBottom: 12 }} resizeMode="cover" />
+                  <Image
+                    source={{ uri: w.photoUrl }}
+                    style={{ width: '100%', height: 250, borderRadius: 12, marginBottom: 12, backgroundColor: '#000' }}
+                    resizeMode="contain"
+                  />
                 ) : null}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                   {w.user?.avatar ? (

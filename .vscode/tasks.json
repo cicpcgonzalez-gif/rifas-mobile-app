@@ -20,6 +20,21 @@
 				"$gradle"
 			],
 			"group": "build"
+		},
+		{
+			"label": "Build APK (Android) [Windows]",
+			"type": "shell",
+			"command": "cd android; .\\gradlew.bat assembleRelease",
+			"isBackground": false,
+			"group": "build"
+		},
+		{
+			"label": "Build APK (Android)",
+			"type": "shell",
+			"command": "cd android; .\\gradlew.bat assembleRelease",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }

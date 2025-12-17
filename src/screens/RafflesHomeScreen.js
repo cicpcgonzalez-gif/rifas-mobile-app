@@ -25,6 +25,7 @@ import { formatMoneyVES } from '../utils';
 import Announcements from '../components/Announcements';
 import PublicProfileModal from '../components/PublicProfileModal';
 import { FilledButton } from '../components/UI';
+import TopBar from '../components/TopBar';
 
 const PulsingBadge = () => {
   const scale = useRef(new Animated.Value(1)).current;
@@ -63,8 +64,12 @@ const PulsingBadge = () => {
 };
 
 export default function RafflesHomeScreen({ navigation, api, user }) {
+  const listRef = useRef(null);
+  const announcementsYRef = useRef(null);
   const [raffles, setRaffles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [walletBalance, setWalletBalance] = useState(null);
+  const [walletQuickVisible, setWalletQuickVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [supportVisible, setSupportVisible] = useState(false);
   const [supportMessage, setSupportMessage] = useState('');
@@ -76,6 +81,13 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   const cardImageWidth = Dimensions.get('window').width - 32;
   const [helpVisible, setHelpVisible] = useState(false);
   const [filter, setFilter] = useState('all');
+
+  const [reactingIds, setReactingIds] = useState(new Set());
+  const [myReactions, setMyReactions] = useState({});
+  const myReactionsRef = useRef({});
+  useEffect(() => {
+    myReactionsRef.current = myReactions;
+  }, [myReactions]);
 
   const shareRaffle = async (raffle) => {
     try {
@@ -97,6 +109,14 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
       const activeOnly = data.filter((r) => r.status !== 'closed');
       setRaffles(activeOnly);
     }
+
+    // Load Wallet (para mostrar saldo en el TopBar)
+    try {
+      const { res: wRes, data: wData } = await api('/wallet');
+      if (wRes.ok && wData) setWalletBalance(wData?.balance ?? 0);
+    } catch (_e) {
+      // Silenciar
+    }
     
     // Load Winners
     try {
@@ -112,6 +132,60 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
 
     setLoading(false);
   }, [api]);
+
+  const refreshWalletBalance = useCallback(async () => {
+    try {
+      const { res: wRes, data: wData } = await api('/wallet');
+      if (wRes.ok && wData) setWalletBalance(wData?.balance ?? 0);
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [api]);
+
+  const scrollToAnnouncements = useCallback(() => {
+    const y = announcementsYRef.current;
+    if (typeof y !== 'number' || !Number.isFinite(y)) return;
+    listRef.current?.scrollToOffset?.({ offset: Math.max(0, y - 8), animated: true });
+  }, []);
+
+  const reactToRaffle = useCallback(async (id, type) => {
+    if (!id) return;
+    setReactingIds((prev) => new Set(prev).add(id));
+
+    const current = myReactionsRef.current?.[id] || null;
+    const next = current === type ? null : type;
+
+    // Optimista: actualizar contadores locales
+    setMyReactions((prev) => ({ ...prev, [id]: next }));
+    setRaffles((prev) => prev.map((r) => {
+      if (r?.id !== id) return r;
+      const counts = { ...(r.reactionCounts || {}) };
+      if (current) counts[current] = Math.max(0, (counts[current] ?? 0) - 1);
+      if (next) counts[next] = (counts[next] ?? 0) + 1;
+      return { ...r, reactionCounts: counts };
+    }));
+
+    try {
+      const { res, data } = await api(`/raffles/${id}/react`, { method: 'POST', body: JSON.stringify({ type }) });
+      if (!res.ok) {
+        // Re-sincronizar y mostrar error
+        await load();
+        Alert.alert('Error', data?.error || 'No se pudo registrar la reacción.');
+      } else {
+        // Refrescar en background para cuadrar con el servidor
+        load();
+      }
+    } catch (e) {
+      await load();
+      Alert.alert('Error', e?.message || 'No se pudo registrar la reacción.');
+    } finally {
+      setReactingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(id);
+        return nextSet;
+      });
+    }
+  }, [api, load]);
 
   useFocusEffect(
     useCallback(() => {
@@ -132,6 +206,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         end={{ x: 1, y: 1 }}
       >
       <FlatList
+        ref={listRef}
         data={loading ? [] : raffles
           .filter((r) => {
             const q = String(searchQuery || '').trim().toLowerCase();
@@ -149,19 +224,24 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         contentContainerStyle={[styles.scroll, { paddingBottom: 100 }]}
         ListHeaderComponent={
           <>
-            <View style={{ alignItems: 'center', marginBottom: 20, marginTop: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', width: '100%', position: 'relative' }}>
-                <Text style={{ fontSize: 28, fontWeight: '900', color: '#fff', letterSpacing: 1 }}>MEGA RIFAS</Text>
-                {techSupport && (
-                  <TouchableOpacity 
-                    onPress={() => setSupportVisible(true)} 
-                    style={{ position: 'absolute', right: 0, padding: 8 }}
-                  >
-                    <Ionicons name="help-circle-outline" size={28} color="#fff" />
-                  </TouchableOpacity>
-                )}
+            <View style={{ paddingHorizontal: 16, marginTop: 10, marginBottom: 14 }}>
+              <TopBar
+                balanceText={
+                  walletBalance === null
+                    ? 'Cargando...'
+                    : `${formatMoneyVES(walletBalance, { withSymbol: false, decimals: 2 })} VES`
+                }
+                onPressWallet={() => {
+                  setWalletQuickVisible(true);
+                  if (walletBalance === null) refreshWalletBalance();
+                }}
+                onPressNotifications={scrollToAnnouncements}
+                onPressProfile={() => navigation.navigate('Perfil')}
+              />
+              <View style={{ alignItems: 'center', marginTop: 10 }}>
+                <Text style={{ fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 0.6 }}>MEGA RIFAS</Text>
+                <View style={{ height: 3, width: 44, backgroundColor: palette.primary, borderRadius: 2, marginTop: 4 }} />
               </View>
-              <View style={{ height: 4, width: 60, backgroundColor: palette.primary, borderRadius: 2, marginTop: 4 }} />
             </View>
 
             {winners.length > 0 && (
@@ -247,7 +327,9 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
               ))}
             </ScrollView>
 
-            <Announcements api={api} onShowProfile={setViewProfileId} />
+            <View onLayout={(e) => { announcementsYRef.current = e?.nativeEvent?.layout?.y; }}>
+              <Announcements api={api} onShowProfile={setViewProfileId} />
+            </View>
           </>
         }
         ListEmptyComponent={
@@ -271,12 +353,20 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
             const reactionCounts = item.reactionCounts || {};
             const likeCount = reactionCounts.LIKE ?? 0;
             const heartCount = reactionCounts.HEART ?? 0;
+            const currentReaction = myReactions[item.id] || null;
+            const reacting = reactingIds.has(item.id);
             
             const gallery = Array.isArray(item.style?.gallery) && item.style.gallery.length
               ? item.style.gallery
               : item.style?.bannerImage
               ? [item.style.bannerImage]
               : [];
+
+            const userBoostActive = !!item?.user?.isBoosted;
+            const userBoostEndsAt = item?.user?.boostEndsAt ? Date.parse(item.user.boostEndsAt) : 0;
+            const raffleBoost = item?.style?.boost;
+            const raffleBoostEndsAt = raffleBoost?.expiresAt ? Date.parse(raffleBoost.expiresAt) : 0;
+            const raffleBoostActive = Number.isFinite(raffleBoostEndsAt) && raffleBoostEndsAt > Date.now();
 
             return (
               <View style={{ marginBottom: 24, backgroundColor: '#1e293b', borderRadius: 0, borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
@@ -297,9 +387,26 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
                             {item.user?.name || 'MegaRifas Oficial'}
                           </Text>
-                          {item.user?.identityVerified && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+                            {item.user?.identityVerified && (
                               <Text style={{ color: '#94a3b8', fontSize: 10 }}>Verificado</Text>
-                          )}
+                            )}
+                            {userBoostActive && (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.12)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.35)' }}>
+                                <Ionicons name="flash" size={12} color="#fbbf24" />
+                                <Text style={{ color: '#fbbf24', fontSize: 10, fontWeight: '900' }}>PROMOCIONADO</Text>
+                              </View>
+                            )}
+
+                            {!!item.user?.id && (
+                              <TouchableOpacity
+                                onPress={() => setViewProfileId(item.user.id)}
+                                style={{ paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: 'rgba(59,130,246,0.12)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.25)' }}
+                              >
+                                <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '900' }}>Ver perfil</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
                       </View>
                     </TouchableOpacity>
                     <TouchableOpacity onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}>
@@ -320,13 +427,13 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                             }}
                             scrollEventThrottle={16}
                         >
-                            {gallery.map((img, idx) => (
-                                <Image 
-                                    key={idx} 
-                                    source={{ uri: img }} 
-                                    style={{ width: Dimensions.get('window').width, height: '100%' }} 
-                                    resizeMode="cover" 
-                                />
+                        {gallery.map((img, idx) => (
+                          <Image 
+                            key={idx} 
+                            source={{ uri: img }} 
+                            style={{ width: Dimensions.get('window').width, height: '100%', backgroundColor: '#000' }} 
+                            resizeMode="contain" 
+                          />
                             ))}
                         </ScrollView>
                     ) : (
@@ -341,6 +448,20 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                             </Text>
                         </View>
                     )}
+
+                    {(userBoostActive || raffleBoostActive) && (
+                      <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name={raffleBoostActive ? 'star' : 'star-outline'} size={14} color="#fbbf24" />
+                        <Text style={{ color: '#fff', fontSize: 10, fontWeight: '900' }}>
+                          {raffleBoostActive ? 'DESTACADA' : 'PROMO'}
+                        </Text>
+                        {userBoostActive && userBoostEndsAt ? (
+                          <Text style={{ color: '#cbd5e1', fontSize: 10 }}>
+                            · {new Date(userBoostEndsAt).toLocaleDateString()}
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
                     <PulsingBadge />
                 </View>
 
@@ -348,22 +469,21 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', gap: 16 }}>
                     <TouchableOpacity
-                      onPress={() => Alert.alert('Reacciones', 'Pronto podrás dar like a las rifas desde aquí.')}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                      disabled={reacting}
+                      onPress={() => reactToRaffle(item.id, 'LIKE')}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: reacting ? 0.7 : 1 }}
                     >
-                      <Ionicons name="thumbs-up-outline" size={26} color="#fff" />
+                      <Ionicons name={currentReaction === 'LIKE' ? 'thumbs-up' : 'thumbs-up-outline'} size={26} color="#fff" />
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{likeCount}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      onPress={() => Alert.alert('Reacciones', 'Pronto podrás enviar corazones a las rifas desde aquí.')}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                      disabled={reacting}
+                      onPress={() => reactToRaffle(item.id, 'HEART')}
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: reacting ? 0.7 : 1 }}
                     >
-                      <Ionicons name="heart-outline" size={26} color="#fff" />
+                      <Ionicons name={currentReaction === 'HEART' ? 'heart' : 'heart-outline'} size={26} color="#fff" />
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{heartCount}</Text>
                     </TouchableOpacity>
-                        <TouchableOpacity onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}>
-                            <Ionicons name="chatbubble-outline" size={26} color="#fff" />
-                        </TouchableOpacity>
                         <TouchableOpacity onPress={() => shareRaffle(item)}>
                             <Ionicons name="paper-plane-outline" size={26} color="#fff" />
                         </TouchableOpacity>
@@ -379,16 +499,28 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                 {/* Content */}
                 <View style={{ paddingHorizontal: 12, paddingBottom: 16 }}>
                     <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 4 }}>{item.title}</Text>
-                    <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={2}>
-                        <Text style={{ fontWeight: 'bold', color: '#fff' }}>{item.user?.name || 'MegaRifas'} </Text>
-                        {item.description}
-                    </Text>
+                    <TouchableOpacity
+                      disabled={!item?.user?.id}
+                      activeOpacity={0.85}
+                      onPress={() => item.user && setViewProfileId(item.user.id)}
+                    >
+                      <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={2}>
+                          <Text style={{ fontWeight: 'bold', color: '#fff' }}>{item.user?.name || 'MegaRifas'} </Text>
+                          {item.description}
+                      </Text>
+                    </TouchableOpacity>
                     
                     <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(item.price, { decimals: 0 })}</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>
-                            {remaining} tickets restantes
-                        </Text>
+                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>
+                        {formatMoneyVES((item?.ticketPrice ?? item?.price) || 0, { decimals: 0 })}
+                      </Text>
+                      {((item?.isSoldOut === true) || remaining === 0 || String(item?.status || '').toLowerCase() !== 'active') ? (
+                        <Text style={{ color: '#fecaca', fontSize: 12, fontWeight: '800' }}>Cerrada / Agotados</Text>
+                      ) : (
+                        <View style={{ width: 120, height: 8, backgroundColor: '#ef4444', borderRadius: 4, overflow: 'hidden' }}>
+                          <View style={{ width: `${(remaining / (item.totalTickets || 1)) * 100}%`, height: '100%', backgroundColor: '#22c55e' }} />
+                        </View>
+                      )}
                     </View>
                 </View>
               </View>
@@ -473,6 +605,59 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={walletQuickVisible} transparent animationType="fade" onRequestClose={() => setWalletQuickVisible(false)}>
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setWalletQuickVisible(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 20 }}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={[styles.card, { padding: 18, borderRadius: 16 }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: 'rgba(20,184,166,0.20)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="wallet-outline" size={20} color={palette.accent} />
+                </View>
+                <View>
+                  <Text style={[styles.section, { marginBottom: 0 }]}>Saldo</Text>
+                  <Text style={styles.muted}>Disponible en tu cuenta</Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setWalletQuickVisible(false)}>
+                <Ionicons name="close" size={22} color={palette.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ marginTop: 14, padding: 14, borderRadius: 14, backgroundColor: 'rgba(168,85,247,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', alignItems: 'center' }}>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 26 }}>
+                {walletBalance === null
+                  ? 'Cargando...'
+                  : `${formatMoneyVES(walletBalance, { withSymbol: false, decimals: 2 })} VES`}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={refreshWalletBalance}
+                style={[styles.button, { flex: 1 }]}
+              >
+                <Ionicons name="refresh" size={18} color="#fff" />
+                <Text style={[styles.buttonText, { marginLeft: 8 }]}>Actualizar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => setWalletQuickVisible(false)}
+                style={[styles.button, styles.secondaryButton, { flex: 1 }]}
+              >
+                <Text style={styles.secondaryText}>Cerrar</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       <PublicProfileModal visible={!!viewProfileId} userId={viewProfileId} onClose={() => setViewProfileId(null)} api={api} />
       </LinearGradient>
     </SafeAreaView>

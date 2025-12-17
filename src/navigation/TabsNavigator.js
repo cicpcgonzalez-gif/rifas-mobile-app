@@ -75,7 +75,7 @@ export default function TabsNavigator({ api, user, onUserUpdate, modulesConfig, 
       )}
       {(user?.role === 'admin' || user?.role === 'organizer' || user?.role === 'superadmin') && cfg?.admin?.raffles !== false && (
         <Tabs.Screen name={user?.role === 'superadmin' ? 'Superadmin' : 'Admin'}>
-          {(props) => <AdminScreen {...props} api={api} user={user} modulesConfig={modulesConfig} />}
+          {(props) => <AdminScreen {...props} api={api} user={user} modulesConfig={modulesConfig} onLogout={onLogout} />}
         </Tabs.Screen>
       )}
     </Tabs.Navigator>

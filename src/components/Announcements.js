@@ -85,7 +85,11 @@ export default function Announcements({ api, onShowProfile }) {
           <Text style={{ color: palette.subtext, marginBottom: 8 }}>{item.content}</Text>
           
           {item.imageUrl && (
-            <Image source={{ uri: item.imageUrl }} style={{ width: '100%', height: 150, borderRadius: 8, marginBottom: 8 }} resizeMode="cover" />
+            <Image
+              source={{ uri: item.imageUrl }}
+              style={{ width: '100%', height: 150, borderRadius: 8, marginBottom: 8, backgroundColor: '#000' }}
+              resizeMode="contain"
+            />
           )}
 
           {(() => {

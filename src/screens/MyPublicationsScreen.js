@@ -117,9 +117,11 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
                       <TouchableOpacity onPress={() => handleEdit(item)} style={{ padding: 8, backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: 8 }}>
                         <Ionicons name="create-outline" size={20} color="#3b82f6" />
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ padding: 8, backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: 8 }}>
-                        <Ionicons name="trash-outline" size={20} color="#ef4444" />
-                      </TouchableOpacity>
+                      {user?.role === 'superadmin' && (
+                        <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ padding: 8, backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: 8 }}>
+                          <Ionicons name="trash-outline" size={20} color="#ef4444" />
+                        </TouchableOpacity>
+                      )}
                     </View>
                   </View>
                 </View>

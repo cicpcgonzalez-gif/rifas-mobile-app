@@ -14,7 +14,12 @@ export function useApi(accessToken, refreshToken, persistTokens) {
 
       // Set JSON content type when sending a body and none provided
       const hasBody = options.body !== undefined;
-      if (hasBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+      const isFormDataBody =
+        typeof FormData !== 'undefined' &&
+        options.body &&
+        typeof options.body === 'object' &&
+        options.body instanceof FormData;
+      if (hasBody && !isFormDataBody && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
 
       let res;
       try {
@@ -49,9 +54,21 @@ export function useApi(accessToken, refreshToken, persistTokens) {
           if (refreshRes.ok && refreshData?.accessToken) {
             await persistTokens(refreshData.accessToken, refreshData.refreshToken || refreshToken, refreshData.user);
             return call(path, options);
+          } else {
+            // Refresh falló: Token inválido o expirado definitivamente
+            await persistTokens(null, null, null);
+            return {
+              res: { ok: false, status: 401 },
+              data: { error: 'Sesión expirada. Inicia sesión nuevamente.' }
+            };
           }
         } catch (err) {
-          // swallow and return original response
+          // Error de red al refrescar o similar
+          await persistTokens(null, null, null);
+          return {
+            res: { ok: false, status: 401 },
+            data: { error: 'Sesión expirada. Inicia sesión nuevamente.' }
+          };
         }
       }
 

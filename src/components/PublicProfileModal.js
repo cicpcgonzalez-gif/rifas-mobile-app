@@ -8,15 +8,25 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [raffles, setRaffles] = useState({ active: [], closed: [] });
+  const [ratingSummary, setRatingSummary] = useState(null);
+
+  const combinedRaffles = React.useMemo(() => {
+    const active = Array.isArray(raffles.active) ? raffles.active : [];
+    const closed = Array.isArray(raffles.closed) ? raffles.closed : [];
+    return [...active, ...closed];
+  }, [raffles.active, raffles.closed]);
 
   useEffect(() => {
     if (visible && userId) {
       setLoading(true);
       Promise.all([
         api(`/users/public/${userId}`),
+        api(`/users/public/${userId}/rating-summary`).catch(() => ({ res: {}, data: null })),
         api(`/users/public/${userId}/raffles`).catch(() => ({ res: {}, data: null }))
-      ]).then(([profileRes, rafflesRes]) => {
+      ]).then(([profileRes, ratingRes, rafflesRes]) => {
         if (profileRes.res?.ok) setProfile(profileRes.data);
+        if (ratingRes?.res?.ok) setRatingSummary(ratingRes.data);
+        else setRatingSummary(null);
         if (rafflesRes?.res?.ok && rafflesRes.data) {
           setRaffles({
             active: rafflesRes.data.active || rafflesRes.data.raffles || [],
@@ -30,6 +40,7 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
     } else {
       setProfile(null);
       setRaffles({ active: [], closed: [] });
+      setRatingSummary(null);
     }
   }, [visible, userId]);
 
@@ -62,15 +73,17 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                 <Text style={[styles.title, { marginTop: 12 }]}>{profile.name}</Text>
                 
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.3)' }}>
-                    <Ionicons name="shield-checkmark" size={14} color="#fbbf24" />
-                    <Text style={{ color: '#fbbf24', fontSize: 12, fontWeight: 'bold' }}>ID: {profile.securityId || 'N/A'}</Text>
-                  </View>
-                  
                   {profile.identityVerified && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(59, 130, 246, 0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.3)' }}>
                       <Ionicons name="checkmark-circle" size={14} color="#3b82f6" />
                       <Text style={{ color: '#3b82f6', fontSize: 12, fontWeight: 'bold' }}>Verificado</Text>
+                    </View>
+                  )}
+
+                  {profile.isBoosted && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.12)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.35)' }}>
+                      <Ionicons name="flash" size={14} color="#fbbf24" />
+                      <Text style={{ color: '#fbbf24', fontSize: 12, fontWeight: 'bold' }}>PROMOCIONADO</Text>
                     </View>
                   )}
                 </View>
@@ -94,6 +107,23 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                     <Text style={{ color: '#94a3b8', fontSize: 12 }}>Reputación</Text>
                   </View>
                 </View>
+
+                {ratingSummary && (ratingSummary.count || ratingSummary.avgScore != null) ? (
+                  <View style={{ alignItems: 'center', marginTop: -12, marginBottom: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Ionicons name="star" size={14} color="#fbbf24" />
+                      <Text style={{ color: '#e2e8f0', fontWeight: '800' }}>
+                        Calificación: {ratingSummary.avgScore == null ? '—' : Number(ratingSummary.avgScore).toFixed(1)}/10
+                      </Text>
+                      <Text style={{ color: '#94a3b8' }}>({ratingSummary.count || 0})</Text>
+                    </View>
+                    {profile.boostEndsAt ? (
+                      <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4 }}>
+                        Boost hasta: {new Date(profile.boostEndsAt).toLocaleString()}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
                 <Text style={styles.muted}>{profile.role === 'admin' || profile.role === 'superadmin' ? 'Administrador' : 'Usuario'}</Text>
               </View>
 
@@ -137,6 +167,16 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                       <Ionicons name="logo-instagram" size={24} color="#E1306C" />
                     </TouchableOpacity>
                   )}
+                  {profile.socials.tiktok && (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@','')}`)}>
+                      <Ionicons name="logo-tiktok" size={24} color="#e2e8f0" />
+                    </TouchableOpacity>
+                  )}
+                  {profile.socials.telegram && (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@','')}`)}>
+                      <Ionicons name="paper-plane-outline" size={24} color="#60a5fa" />
+                    </TouchableOpacity>
+                  )}
                   {profile.socials.email && (
                     <TouchableOpacity onPress={() => Linking.openURL(`mailto:${profile.socials.email}`)}>
                       <Ionicons name="mail-outline" size={24} color={palette.primary} />
@@ -145,14 +185,21 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                 </View>
               )}
 
-              {(raffles.active.length > 0 || raffles.closed.length > 0) && (
+              {combinedRaffles.length > 0 && (
                 <View style={{ marginTop: 20 }}>
                   <Text style={[styles.section, { textAlign: 'center' }]}>Rifas de este rifero</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 12, gap: 10 }}>
-                    {raffles.active.map((r) => (
-                      <View key={`act-${r.id}`} style={{ width: 180, backgroundColor: 'rgba(255,255,255,0.05)', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                    {combinedRaffles.map((r) => {
+                      const isClosed = String(r.status || '').toLowerCase() !== 'active';
+                      return (
+                      <View key={`${isClosed ? 'cls' : 'act'}-${r.id}`} style={{ width: 180, backgroundColor: 'rgba(255,255,255,0.05)', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
                         <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{r.title}</Text>
                         <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={2}>{r.description}</Text>
+                        {isClosed && (
+                          <View style={{ marginTop: 6, alignSelf: 'flex-start', backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
+                            <Text style={{ color: '#fecaca', fontSize: 10, fontWeight: '800' }}>CERRADA</Text>
+                          </View>
+                        )}
                         <View style={{ marginTop: 8 }}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                             <Text style={{ color: '#cbd5e1', fontSize: 11 }}>Disp.</Text>
@@ -165,22 +212,8 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                           </View>
                         </View>
                       </View>
-                    ))}
-                    {raffles.active.length === 0 && <Text style={styles.muted}>Sin rifas activas.</Text>}
+                    );})}
                   </ScrollView>
-
-                  {raffles.closed.length > 0 && (
-                    <View style={{ marginTop: 8 }}>
-                      <Text style={[styles.muted, { marginBottom: 6 }]}>Historial reciente</Text>
-                      {raffles.closed.slice(0, 3).map((r) => (
-                        <View key={`cls-${r.id}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                          <Ionicons name="checkmark-circle" size={14} color="#22c55e" style={{ marginRight: 6 }} />
-                          <Text style={{ color: '#e2e8f0', flex: 1 }} numberOfLines={1}>{r.title}</Text>
-                          {r.winner && <Text style={{ color: '#fbbf24', fontSize: 12 }}>Ganador: {r.winner}</Text>}
-                        </View>
-                      ))}
-                    </View>
-                  )}
                 </View>
               )}
             </ScrollView>
