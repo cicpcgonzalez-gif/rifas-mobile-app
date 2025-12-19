@@ -67,6 +67,12 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const sold = stats?.sold || 0;
   const remaining = stats?.remaining ?? (totalTickets ? Math.max(totalTickets - sold, 0) : 0);
   const percentLeft = totalTickets ? Math.max(0, Math.min(100, (remaining / totalTickets) * 100)) : 0;
+  const status = String(current?.status || '').toLowerCase();
+  const endMs = Date.parse(current?.endDate);
+  const endedByTime = Number.isFinite(endMs) && endMs > 0 && endMs < Date.now();
+  const isClosed = status !== 'active' || endedByTime;
+  const isAgotada = !isClosed && ((current?.isSoldOut === true) || Number(remaining) === 0);
+  const playDisabled = isClosed || isAgotada;
   const safeSecurityId = typeof current?.user?.securityId === 'string' ? current.user.securityId : '';
   const safeAvatarUri = typeof current?.user?.avatar === 'string' && current.user.avatar.trim().length > 0 ? current.user.avatar : null;
   const ticketNumber = ticket?.number ?? (Array.isArray(ticket?.numbers) ? ticket.numbers[0] : ticket?.numbers);
@@ -175,7 +181,80 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     }
   };
 
+  const isInfoView = !!ticket;
+  if (isInfoView) {
+    const numbers = Array.isArray(ticket?.numbers)
+      ? ticket.numbers.filter((n) => n !== null && n !== undefined)
+      : ticket?.number != null
+        ? [ticket.number]
+        : [];
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <ScrollView contentContainerStyle={styles.scroll}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={{ padding: 6, marginLeft: -6 }}>
+              <Ionicons name="arrow-back" size={22} color="#fff" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { marginBottom: 0, flex: 1, textAlign: 'center' }]} numberOfLines={1}>{current.title}</Text>
+            <View style={{ width: 28 }} />
+          </View>
+
+          <View style={[styles.card, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+            <Text style={styles.section}>Rifero</Text>
+
+            <TouchableOpacity
+              disabled={!current?.user?.id}
+              onPress={() => current.user && setViewProfileId(current.user.id)}
+              style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}
+            >
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}>
+                {safeAvatarUri ? (
+                  <Image source={{ uri: safeAvatarUri }} style={{ width: 44, height: 44, borderRadius: 22 }} />
+                ) : (
+                  <Text style={{ color: '#000', fontWeight: '900' }}>{userInitial}</Text>
+                )}
+              </View>
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }} numberOfLines={1}>{userDisplayName}</Text>
+                {safeSecurityId ? (
+                  <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={1}>ID: {safeSecurityId}</Text>
+                ) : null}
+              </View>
+              {!!current?.user?.id ? (
+                <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+              ) : null}
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.card, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+            <Text style={styles.section}>Tickets comprados</Text>
+            {numbers.length === 0 ? (
+              <Text style={styles.muted}>No hay números disponibles.</Text>
+            ) : (
+              <View style={{ marginTop: 10 }}>
+                {numbers.map((n, idx) => (
+                  <View
+                    key={`${n}-${idx}`}
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: idx === numbers.length - 1 ? 0 : 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}
+                  >
+                    <Text style={{ color: '#94a3b8', fontWeight: '800' }}>#{String(idx + 1).padStart(2, '0')}</Text>
+                    <Text style={{ color: '#fff', fontWeight: '900', fontFamily: 'monospace' }}>{formatTicketNumber(n, current?.digits)}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+
+          <PublicProfileModal visible={!!viewProfileId} userId={viewProfileId} onClose={() => setViewProfileId(null)} api={api} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   const purchase = async () => {
+    if (isClosed) return Alert.alert('Rifa cerrada', 'Esta rifa ya culminó y no permite compras.');
+    if (isAgotada) return Alert.alert('Rifa agotada', 'Esta rifa ya no tiene números disponibles para la venta.');
     const min = getMinTickets(current);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
@@ -202,6 +281,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   };
 
   const pickProof = async () => {
+    if (isClosed) return Alert.alert('Rifa cerrada', 'Esta rifa ya culminó y no permite pagos.');
+    if (isAgotada) return Alert.alert('Rifa agotada', 'Esta rifa ya no tiene números disponibles para la venta.');
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return Alert.alert('Permiso requerido', 'Autoriza el acceso a la galería.');
     const result = await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.7 });
@@ -212,6 +293,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   };
 
   const submitManualPayment = async () => {
+    if (isClosed) return Alert.alert('Rifa cerrada', 'Esta rifa ya culminó y no permite pagos.');
+    if (isAgotada) return Alert.alert('Rifa agotada', 'Esta rifa ya no tiene números disponibles para la venta.');
     const min = getMinTickets(current);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
@@ -443,12 +526,29 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             </View>
           )}
 
-          <TextInput style={styles.input} value={quantity} onChangeText={setQuantity} keyboardType="numeric" placeholder="Cantidad (Aleatoria)" />
+          <TextInput
+            style={[styles.input, playDisabled ? { opacity: 0.6 } : null]}
+            value={quantity}
+            onChangeText={setQuantity}
+            keyboardType="numeric"
+            placeholder="Cantidad (Aleatoria)"
+            editable={!playDisabled}
+          />
 
           {(!style.paymentMethods || style.paymentMethods.includes('wallet')) && (
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <OutlineButton title={buying ? 'Procesando...' : 'Comprar con Saldo'} onPress={purchase} disabled={buying} icon={<Ionicons name="wallet-outline" size={18} color={themeColor} />} />
-              <OutlineButton title={showPurchase ? 'Ocultar Pago Manual' : 'Pago Manual'} onPress={() => setShowPurchase(!showPurchase)} icon={<Ionicons name="cash-outline" size={18} color={themeColor} />} />
+              <OutlineButton 
+                title={buying ? 'Procesando...' : playDisabled ? (isAgotada ? 'AGOTADA' : 'CERRADA') : 'Comprar con Saldo'} 
+                onPress={purchase} 
+                disabled={buying || playDisabled} 
+                icon={<Ionicons name="wallet-outline" size={18} color={themeColor} />} 
+              />
+              <OutlineButton 
+                title={showPurchase ? 'Ocultar Pago Manual' : 'Pago Manual'} 
+                onPress={() => setShowPurchase(!showPurchase)} 
+                disabled={playDisabled}
+                icon={<Ionicons name="cash-outline" size={18} color={themeColor} />} 
+              />
             </View>
           )}
         </View>
@@ -487,7 +587,9 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                     return (
                       <TouchableOpacity
                         key={id}
+                        disabled={playDisabled}
                         onPress={() => {
+                          if (playDisabled) return;
                           setManualProvider(id);
                           setPaymentStep(1);
                         }}
@@ -502,7 +604,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                           marginBottom: 8,
                           backgroundColor: active ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.06)',
                           borderWidth: 1,
-                          borderColor: active ? palette.primary : 'rgba(255,255,255,0.10)'
+                          borderColor: active ? palette.primary : 'rgba(255,255,255,0.10)',
+                          opacity: playDisabled ? 0.6 : 1
                         }}
                       >
                         <View
@@ -567,9 +670,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           {paymentStep === 1 ? (
             <>
               <TextInput
-                style={styles.input}
+                style={[styles.input, playDisabled ? { opacity: 0.6 } : null]}
                 value={manualRef}
                 onChangeText={setManualRef}
+                editable={!playDisabled}
                 placeholder={
                   manualProvider === 'binance'
                     ? 'TxID / Hash'
@@ -578,16 +682,28 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                       : 'Referencia (últimos 4 dígitos)'
                 }
               />
-              <TextInput style={styles.input} value={manualNote} onChangeText={setManualNote} placeholder="Nota (opcional)" />
+              <TextInput
+                style={[styles.input, playDisabled ? { opacity: 0.6 } : null]}
+                value={manualNote}
+                onChangeText={setManualNote}
+                placeholder="Nota (opcional)"
+                editable={!playDisabled}
+              />
               <OutlineButton
                 title="Continuar"
                 onPress={() => setPaymentStep(2)}
+                disabled={playDisabled}
                 icon={<Ionicons name="arrow-forward-outline" size={18} color={palette.primary} />}
               />
             </>
           ) : (
             <>
-              <TouchableOpacity style={[styles.button, styles.secondaryButton]} onPress={pickProof} activeOpacity={0.85}>
+              <TouchableOpacity
+                style={[styles.button, styles.secondaryButton, playDisabled ? { opacity: 0.6 } : null]}
+                onPress={pickProof}
+                disabled={playDisabled}
+                activeOpacity={0.85}
+              >
                 <Ionicons name="image-outline" size={18} color={palette.primary} />
                 <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Adjuntar captura</Text>
               </TouchableOpacity>
@@ -602,7 +718,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
                 title={manualLoading ? 'Enviando...' : 'Enviar comprobante'}
                 onPress={submitManualPayment}
                 loading={manualLoading}
-                disabled={manualLoading}
+                disabled={manualLoading || playDisabled}
                 icon={<Ionicons name="cloud-upload-outline" size={18} color="#fff" />}
               />
               <OutlineButton

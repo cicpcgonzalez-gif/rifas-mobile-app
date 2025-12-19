@@ -1,0 +1,36 @@
+# Normalize text files and avoid CRLF/LF churn in diffs
+* text=auto
+
+# Source/config files
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.xml  text eol=lf
+*.txt  text eol=lf
+
+# Windows scripts
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Shell scripts
+*.sh   text eol=lf
+
+# Binaries
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.webp     binary
+*.ttf      binary
+*.otf      binary
+*.keystore binary
+*.jar      binary
+*.apk      binary
+*.aab      binary
+*.pb       binary
+*.hbc      binary

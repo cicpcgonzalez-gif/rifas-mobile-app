@@ -17,6 +17,7 @@ import { styles } from '../styles';
 export default function MyPublicationsScreen({ api, navigation, user }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
+  const isSuperadmin = String(user?.role || '').toLowerCase() === 'superadmin';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +41,7 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
   );
 
   const handleDelete = (id) => {
+    if (!isSuperadmin) return;
     Alert.alert(
       'Eliminar Rifa',
       '¿Estás seguro? Esta acción no se puede deshacer.',
@@ -49,7 +51,7 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
           text: 'Eliminar',
           style: 'destructive',
           onPress: async () => {
-            const { res, data } = await api(`/admin/raffles/${id}`, { method: 'DELETE' });
+            const { res, data } = await api(`/raffles/${id}`, { method: 'DELETE' });
             if (res.ok) {
               Alert.alert('Éxito', 'Rifa eliminada.');
               load();
@@ -117,11 +119,11 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
                       <TouchableOpacity onPress={() => handleEdit(item)} style={{ padding: 8, backgroundColor: 'rgba(59, 130, 246, 0.2)', borderRadius: 8 }}>
                         <Ionicons name="create-outline" size={20} color="#3b82f6" />
                       </TouchableOpacity>
-                      {user?.role === 'superadmin' && (
+                      {isSuperadmin ? (
                         <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ padding: 8, backgroundColor: 'rgba(239, 68, 68, 0.2)', borderRadius: 8 }}>
                           <Ionicons name="trash-outline" size={20} color="#ef4444" />
                         </TouchableOpacity>
-                      )}
+                      ) : null}
                     </View>
                   </View>
                 </View>

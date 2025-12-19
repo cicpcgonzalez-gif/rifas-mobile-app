@@ -1,28 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, ActivityIndicator, Image, ScrollView, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, Modal, ActivityIndicator, Image, ScrollView, TouchableOpacity, Linking, Dimensions, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { palette } from '../theme';
 import { styles } from '../styles';
+import { formatMoneyVES } from '../utils';
+
+const { width } = Dimensions.get('window');
 
 export default function PublicProfileModal({ visible, onClose, userId, api }) {
+  const navigation = useNavigation();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [raffles, setRaffles] = useState({ active: [], closed: [] });
   const [ratingSummary, setRatingSummary] = useState(null);
 
-  const combinedRaffles = React.useMemo(() => {
+  const previewActiveRaffles = React.useMemo(() => {
     const active = Array.isArray(raffles.active) ? raffles.active : [];
-    const closed = Array.isArray(raffles.closed) ? raffles.closed : [];
-    return [...active, ...closed];
-  }, [raffles.active, raffles.closed]);
+    return active.slice(0, 3);
+  }, [raffles.active]);
 
   useEffect(() => {
     if (visible && userId) {
       setLoading(true);
       Promise.all([
-        api(`/users/public/${userId}`),
-        api(`/users/public/${userId}/rating-summary`).catch(() => ({ res: {}, data: null })),
-        api(`/users/public/${userId}/raffles`).catch(() => ({ res: {}, data: null }))
+        api(\/users/public/\\),
+        api(\/users/public/\/rating-summary\).catch(() => ({ res: {}, data: null })),
+        api(\/users/public/\/raffles\).catch(() => ({ res: {}, data: null }))
       ]).then(([profileRes, ratingRes, rafflesRes]) => {
         if (profileRes.res?.ok) setProfile(profileRes.data);
         if (ratingRes?.res?.ok) setRatingSummary(ratingRes.data);
@@ -44,184 +48,505 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
     }
   }, [visible, userId]);
 
+  const StatItem = ({ label, value, icon, color }) => (
+    <View style={localStyles.statItem}>
+      <View style={[localStyles.statIconContainer, { backgroundColor: \\20\, borderColor: \\40\ }]}>
+        <Ionicons name={icon} size={18} color={color} />
+      </View>
+      <Text style={localStyles.statValue}>{value}</Text>
+      <Text style={localStyles.statLabel}>{label}</Text>
+    </View>
+  );
+
+  const isAdmin = String(profile?.role || '').toLowerCase() === 'admin';
+  const isSuperAdmin = String(profile?.role || '').toLowerCase() === 'superadmin';
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-        <View style={[styles.card, { backgroundColor: '#1e293b', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '85%', paddingBottom: 40 }]}>
-          <View style={{ alignItems: 'center', paddingTop: 8, paddingBottom: 16 }}>
-            <View style={{ width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2 }} />
+    <Modal visible={visible} animationType='slide' transparent onRequestClose={onClose}>
+      <View style={localStyles.modalOverlay}>
+        <View style={localStyles.modalContent}>
+          {/* Handle Bar */}
+          <View style={localStyles.handleBarContainer}>
+            <View style={localStyles.handleBar} />
           </View>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, position: 'absolute', right: 0, top: 16, zIndex: 10 }}>
-            <TouchableOpacity onPress={onClose} style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: 4, borderRadius: 12 }}>
-              <Ionicons name="close" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
+
+          {/* Close Button */}
+          <TouchableOpacity onPress={onClose} style={localStyles.closeButton}>
+            <Ionicons name='close' size={24} color='#fff' />
+          </TouchableOpacity>
 
           {loading ? (
-            <ActivityIndicator color={palette.primary} size="large" />
+            <View style={localStyles.loadingContainer}>
+              <ActivityIndicator color={palette.primary} size='large' />
+            </View>
           ) : profile ? (
-            <ScrollView>
-              <View style={{ alignItems: 'center', marginBottom: 16 }}>
-                {profile.avatar ? (
-                  <Image source={{ uri: profile.avatar }} style={{ width: 100, height: 100, borderRadius: 50 }} />
-                ) : (
-                  <View style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' }}>
-                    <Ionicons name="person" size={48} color={palette.muted} />
-                  </View>
-                )}
-                <Text style={[styles.title, { marginTop: 12 }]}>{profile.name}</Text>
-                
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 8 }}>
+            <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+              
+              {/* Header Section */}
+              <View style={localStyles.headerSection}>
+                <View style={[localStyles.avatarContainer, profile.isBoosted && localStyles.avatarBoosted]}>
+                  {profile.avatar ? (
+                    <Image source={{ uri: profile.avatar }} style={localStyles.avatar} />
+                  ) : (
+                    <View style={[localStyles.avatar, localStyles.avatarPlaceholder]}>
+                      <Text style={localStyles.avatarInitial}>{String(profile.name || 'U').charAt(0).toUpperCase()}</Text>
+                    </View>
+                  )}
                   {profile.identityVerified && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(59, 130, 246, 0.1)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.3)' }}>
-                      <Ionicons name="checkmark-circle" size={14} color="#3b82f6" />
-                      <Text style={{ color: '#3b82f6', fontSize: 12, fontWeight: 'bold' }}>Verificado</Text>
-                    </View>
-                  )}
-
-                  {profile.isBoosted && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.12)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.35)' }}>
-                      <Ionicons name="flash" size={14} color="#fbbf24" />
-                      <Text style={{ color: '#fbbf24', fontSize: 12, fontWeight: 'bold' }}>PROMOCIONADO</Text>
+                    <View style={localStyles.verifiedBadge}>
+                      <Ionicons name='checkmark-circle' size={16} color='#fff' />
                     </View>
                   )}
                 </View>
 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: 24, marginBottom: 24 }}>
-                  <View style={{ alignItems: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>{profile.stats?.raffles || 0}</Text>
-                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifas</Text>
+                <Text style={localStyles.userName}>{profile.name}</Text>
+                
+                {isSuperAdmin && (
+                  <View style={[localStyles.boostTag, { borderColor: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
+                    <Ionicons name='shield-checkmark' size={12} color='#ef4444' />
+                    <Text style={[localStyles.boostText, { color: '#ef4444' }]}>SUPER ADMIN</Text>
                   </View>
-                  <View style={{ width: 1, height: '100%', backgroundColor: 'rgba(255,255,255,0.1)' }} />
-                  <View style={{ alignItems: 'center' }}>
-                    <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>{profile.stats?.sales || 0}</Text>
-                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>Ventas</Text>
+                )}
+                
+                {isAdmin && !isSuperAdmin && (
+                  <View style={[localStyles.boostTag, { borderColor: palette.primary, backgroundColor: 'rgba(168, 85, 247, 0.15)' }]}>
+                    <Ionicons name='shield' size={12} color={palette.primary} />
+                    <Text style={[localStyles.boostText, { color: palette.primary }]}>ADMINISTRADOR</Text>
                   </View>
-                  <View style={{ width: 1, height: '100%', backgroundColor: 'rgba(255,255,255,0.1)' }} />
-                  <View style={{ alignItems: 'center' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>{profile.reputationScore || 5.0}</Text>
-                      <Ionicons name="star" size={14} color="#fbbf24" style={{ marginLeft: 2 }} />
-                    </View>
-                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>Reputación</Text>
-                  </View>
-                </View>
+                )}
 
-                {ratingSummary && (ratingSummary.count || ratingSummary.avgScore != null) ? (
-                  <View style={{ alignItems: 'center', marginTop: -12, marginBottom: 16 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Ionicons name="star" size={14} color="#fbbf24" />
-                      <Text style={{ color: '#e2e8f0', fontWeight: '800' }}>
-                        Calificación: {ratingSummary.avgScore == null ? '—' : Number(ratingSummary.avgScore).toFixed(1)}/10
-                      </Text>
-                      <Text style={{ color: '#94a3b8' }}>({ratingSummary.count || 0})</Text>
-                    </View>
-                    {profile.boostEndsAt ? (
-                      <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 4 }}>
-                        Boost hasta: {new Date(profile.boostEndsAt).toLocaleString()}
-                      </Text>
-                    ) : null}
+                {profile.isBoosted && (
+                  <View style={localStyles.boostTag}>
+                    <Ionicons name='flash' size={12} color='#F59E0B' />
+                    <Text style={localStyles.boostText}>PROMOCIONADO</Text>
                   </View>
-                ) : null}
-                <Text style={styles.muted}>{profile.role === 'admin' || profile.role === 'superadmin' ? 'Administrador' : 'Usuario'}</Text>
-              </View>
+                )}
 
-              {profile.bio && <Text style={{ color: palette.text, textAlign: 'center', marginBottom: 16 }}>{profile.bio}</Text>}
-
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 16 }}>
-                {profile.stats ? (
-                  <>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 18 }}>{profile.stats.raffles || 0}</Text>
-                      <Text style={styles.muted}>Rifas</Text>
-                    </View>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 18 }}>{profile.stats.prizes || 0}</Text>
-                      <Text style={styles.muted}>Premios</Text>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 18 }}>{profile._count?.tickets || 0}</Text>
-                      <Text style={styles.muted}>Tickets</Text>
-                    </View>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 18 }}>{profile._count?.announcements || 0}</Text>
-                      <Text style={styles.muted}>Anuncios</Text>
-                    </View>
-                  </>
+                {!!userId && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      onClose?.();
+                      navigation.navigate('PublicProfile', { userId });
+                    }}
+                    style={localStyles.viewProfileButton}
+                  >
+                    <Text style={localStyles.viewProfileText}>Ver perfil completo</Text>
+                    <Ionicons name='arrow-forward' size={14} color={palette.primary} />
+                  </TouchableOpacity>
                 )}
               </View>
 
+              {/* Stats Grid */}
+              <View style={localStyles.statsContainer}>
+                <StatItem 
+                  label='Rifas' 
+                  value={profile.stats?.raffles || 0} 
+                  icon='ticket-outline' 
+                  color={palette.accent} 
+                />
+                <View style={localStyles.statDivider} />
+                <StatItem 
+                  label='Ventas' 
+                  value={profile.stats?.sales || 0} 
+                  icon='cash-outline' 
+                  color='#10b981' 
+                />
+                <View style={localStyles.statDivider} />
+                <StatItem 
+                  label='Reputaci�n' 
+                  value={ratingSummary?.avgScore != null ? Number(ratingSummary.avgScore).toFixed(1) : (profile.reputationScore != null ? Number(profile.reputationScore).toFixed(1) : '')} 
+                  icon='star' 
+                  color='#F59E0B' 
+                />
+              </View>
+
+              {/* Bio */}
+              {profile.bio && (
+                <View style={localStyles.bioContainer}>
+                  <Text style={localStyles.bioText}>'{profile.bio}'</Text>
+                </View>
+              )}
+
+              {/* Socials */}
               {profile.socials && (
-                <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16 }}>
+                <View style={localStyles.socialsContainer}>
                   {profile.socials.whatsapp && (
-                    <TouchableOpacity onPress={() => Linking.openURL(`https://wa.me/${profile.socials.whatsapp}`)}>
-                      <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
+                    <TouchableOpacity onPress={() => Linking.openURL(\https://wa.me/\\)} style={[localStyles.socialButton, { backgroundColor: '#25D366' }]}>
+                      <Ionicons name='logo-whatsapp' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.instagram && (
-                    <TouchableOpacity onPress={() => Linking.openURL(`https://instagram.com/${profile.socials.instagram}`)}>
-                      <Ionicons name="logo-instagram" size={24} color="#E1306C" />
+                    <TouchableOpacity onPress={() => Linking.openURL(\https://instagram.com/\\)} style={[localStyles.socialButton, { backgroundColor: '#E1306C' }]}>
+                      <Ionicons name='logo-instagram' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.tiktok && (
-                    <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@','')}`)}>
-                      <Ionicons name="logo-tiktok" size={24} color="#e2e8f0" />
+                    <TouchableOpacity onPress={() => Linking.openURL(\https://www.tiktok.com/@\\)} style={[localStyles.socialButton, { backgroundColor: '#000' }]}>
+                      <Ionicons name='logo-tiktok' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.telegram && (
-                    <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@','')}`)}>
-                      <Ionicons name="paper-plane-outline" size={24} color="#60a5fa" />
-                    </TouchableOpacity>
-                  )}
-                  {profile.socials.email && (
-                    <TouchableOpacity onPress={() => Linking.openURL(`mailto:${profile.socials.email}`)}>
-                      <Ionicons name="mail-outline" size={24} color={palette.primary} />
+                    <TouchableOpacity onPress={() => Linking.openURL(\https://t.me/\\)} style={[localStyles.socialButton, { backgroundColor: '#0088cc' }]}>
+                      <Ionicons name='paper-plane' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                 </View>
               )}
 
-              {combinedRaffles.length > 0 && (
-                <View style={{ marginTop: 20 }}>
-                  <Text style={[styles.section, { textAlign: 'center' }]}>Rifas de este rifero</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 12, gap: 10 }}>
-                    {combinedRaffles.map((r) => {
-                      const isClosed = String(r.status || '').toLowerCase() !== 'active';
-                      return (
-                      <View key={`${isClosed ? 'cls' : 'act'}-${r.id}`} style={{ width: 180, backgroundColor: 'rgba(255,255,255,0.05)', padding: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                        <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{r.title}</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={2}>{r.description}</Text>
-                        {isClosed && (
-                          <View style={{ marginTop: 6, alignSelf: 'flex-start', backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 }}>
-                            <Text style={{ color: '#fecaca', fontSize: 10, fontWeight: '800' }}>CERRADA</Text>
+              {/* Active Raffles Preview */}
+              {previewActiveRaffles.length > 0 && (
+                <View style={localStyles.rafflesSection}>
+                  <View style={localStyles.sectionHeader}>
+                    <Text style={localStyles.sectionTitle}>Rifas Activas</Text>
+                    <View style={localStyles.sectionBadge}>
+                      <Text style={localStyles.sectionBadgeText}>{previewActiveRaffles.length}</Text>
+                    </View>
+                  </View>
+                  
+                  {previewActiveRaffles.map((r) => {
+                    const stats = r?.stats || {};
+                    const total = r?.totalTickets || stats.total || 0;
+                    const sold = stats.sold || 0;
+                    const remaining = stats.remaining ?? (total ? Math.max(total - sold, 0) : 0);
+                    const gallery = Array.isArray(r?.style?.gallery) && r.style.gallery.length ? r.style.gallery : r?.style?.bannerImage ? [r.style.bannerImage] : [];
+                    const imageUri = gallery.length > 0 ? gallery[0] : null;
+
+                    return (
+                      <View key={r.id} style={localStyles.raffleCard}>
+                        <View style={localStyles.raffleImageContainer}>
+                          {imageUri ? (
+                            <Image source={{ uri: imageUri }} style={localStyles.raffleImage} resizeMode='cover' />
+                          ) : (
+                            <View style={[localStyles.raffleImage, { backgroundColor: '#334155', alignItems: 'center', justifyContent: 'center' }]}>
+                              <Ionicons name='image-outline' size={24} color='#64748b' />
+                            </View>
+                          )}
+                          <View style={localStyles.priceTag}>
+                            <Text style={localStyles.priceText}>{formatMoneyVES(r.price ?? r.ticketPrice, { decimals: 0 })}</Text>
                           </View>
-                        )}
-                        <View style={{ marginTop: 8 }}>
-                          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                            <Text style={{ color: '#cbd5e1', fontSize: 11 }}>Disp.</Text>
-                            <Text style={{ color: '#cbd5e1', fontSize: 11 }}>
-                              {(r.stats?.remaining ?? r.remaining ?? 0)} / {(r.totalTickets || r.stats?.total || '∞')}
-                            </Text>
-                          </View>
-                          <View style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
-                            <View style={{ width: `${Math.max(0, Math.min(100, ((r.stats?.remaining ?? r.remaining ?? 0) / (r.totalTickets || r.stats?.total || 1)) * 100))}%`, height: '100%', backgroundColor: palette.primary }} />
+                        </View>
+                        <View style={localStyles.raffleInfo}>
+                          <Text style={localStyles.raffleTitle} numberOfLines={2}>{r.title}</Text>
+                          <View style={localStyles.raffleFooter}>
+                            <Ionicons name='ticket-outline' size={14} color={palette.subtext} />
+                            <Text style={localStyles.raffleSubtitle}>{remaining} disponibles</Text>
                           </View>
                         </View>
                       </View>
-                    );})}
-                  </ScrollView>
+                    );
+                  })}
                 </View>
               )}
+
             </ScrollView>
           ) : (
-            <Text style={{ color: palette.text, textAlign: 'center' }}>No se pudo cargar el perfil.</Text>
+            <View style={localStyles.errorContainer}>
+              <Ionicons name='alert-circle-outline' size={48} color={palette.muted} />
+              <Text style={localStyles.errorText}>No se pudo cargar el perfil</Text>
+            </View>
           )}
         </View>
       </View>
     </Modal>
   );
 }
+
+const localStyles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1e293b',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    maxHeight: '90%',
+    minHeight: '50%',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  handleBarContainer: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  handleBar: {
+    width: 40,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 2,
+  },
+  closeButton: {
+    position: 'absolute',
+    right: 16,
+    top: 16,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 20,
+    padding: 6,
+    zIndex: 10,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 200,
+  },
+  headerSection: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  avatarContainer: {
+    position: 'relative',
+    marginBottom: 12,
+    shadowColor: palette.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
+  avatar: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 3,
+    borderColor: '#1e293b',
+  },
+  avatarPlaceholder: {
+    backgroundColor: palette.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  avatarInitial: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: palette.muted,
+  },
+  avatarBoosted: {
+    borderColor: '#F59E0B',
+    borderWidth: 2,
+    borderRadius: 52,
+    padding: 2, 
+  },
+  verifiedBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#3b82f6',
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#1e293b',
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  userName: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  boostTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  boostText: {
+    color: '#F59E0B',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  viewProfileButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(168, 85, 247, 0.1)',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.2)',
+  },
+  viewProfileText: {
+    color: palette.primary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    marginHorizontal: 20,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  statItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 1,
+  },
+  statValue: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  statLabel: {
+    color: palette.subtext,
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statDivider: {
+    width: 1,
+    height: '80%',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignSelf: 'center',
+  },
+  bioContainer: {
+    paddingHorizontal: 32,
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  bioText: {
+    color: palette.subtext,
+    fontSize: 14,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  socialsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 16,
+    marginBottom: 32,
+  },
+  socialButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  rafflesSection: {
+    paddingHorizontal: 20,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  sectionTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  sectionBadge: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  sectionBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  raffleCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  raffleImageContainer: {
+    width: 70,
+    height: 70,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  raffleImage: {
+    width: '100%',
+    height: '100%',
+  },
+  priceTag: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingVertical: 2,
+    alignItems: 'center',
+  },
+  priceText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  raffleInfo: {
+    flex: 1,
+    marginLeft: 12,
+    justifyContent: 'center',
+  },
+  raffleTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 6,
+    lineHeight: 20,
+  },
+  raffleFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  raffleSubtitle: {
+    color: palette.subtext,
+    fontSize: 12,
+  },
+  errorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 200,
+  },
+  errorText: {
+    color: palette.muted,
+    marginTop: 12,
+    fontSize: 16,
+  },
+});

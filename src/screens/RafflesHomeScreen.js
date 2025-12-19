@@ -82,6 +82,9 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   const [helpVisible, setHelpVisible] = useState(false);
   const [filter, setFilter] = useState('all');
 
+  const [postMenuVisible, setPostMenuVisible] = useState(false);
+  const [postMenuRaffle, setPostMenuRaffle] = useState(null);
+
   const [reactingIds, setReactingIds] = useState(new Set());
   const [myReactions, setMyReactions] = useState({});
   const myReactionsRef = useRef({});
@@ -106,8 +109,18 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
     setLoading(true);
     const { res, data } = await api('/raffles');
     if (res.ok && Array.isArray(data)) {
-      const activeOnly = data.filter((r) => r.status !== 'closed');
-      setRaffles(activeOnly);
+      // En el apartado de Rifas deben verse las rifas activas (incluyendo AGOTADAS).
+      // Solo se eliminan del feed cuando culminan (status != active o ya pasó la fecha final).
+      const now = Date.now();
+      const visible = data.filter((r) => {
+        const status = String(r?.status || '').toLowerCase();
+        if (status && status !== 'active') return false;
+        const endMs = Date.parse(r?.endDate);
+        const endedByTime = Number.isFinite(endMs) && endMs > 0 && endMs < now;
+        if (endedByTime) return false;
+        return true;
+      });
+      setRaffles(visible);
     }
 
     // Load Wallet (para mostrar saldo en el TopBar)
@@ -168,16 +181,36 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
     try {
       const { res, data } = await api(`/raffles/${id}/react`, { method: 'POST', body: JSON.stringify({ type }) });
       if (!res.ok) {
-        // Re-sincronizar y mostrar error
-        await load();
-        Alert.alert('Error', data?.error || 'No se pudo registrar la reacción.');
-      } else {
-        // Refrescar en background para cuadrar con el servidor
-        load();
+        const msg = String(data?.error || '').toLowerCase();
+        const isAuthIssue = res.status === 401 || res.status === 403 || msg.includes('sesión expirada') || msg.includes('sesion expirada') || msg.includes('token');
+        // Revertir el optimista si falló (sin recargar toda la pantalla)
+        setMyReactions((prev) => ({ ...prev, [id]: current }));
+        setRaffles((prev) => prev.map((r) => {
+          if (r?.id !== id) return r;
+          const counts = { ...(r.reactionCounts || {}) };
+          if (next) counts[next] = Math.max(0, (counts[next] ?? 0) - 1);
+          if (current) counts[current] = (counts[current] ?? 0) + 1;
+          return { ...r, reactionCounts: counts };
+        }));
+        if (!isAuthIssue) {
+          Alert.alert('Error', data?.error || 'No se pudo registrar la reacción.');
+        }
       }
     } catch (e) {
-      await load();
-      Alert.alert('Error', e?.message || 'No se pudo registrar la reacción.');
+      const msg = String(e?.message || '').toLowerCase();
+      const isAuthIssue = msg.includes('sesión expirada') || msg.includes('sesion expirada') || msg.includes('token');
+      // Revertir el optimista si falló (sin recargar toda la pantalla)
+      setMyReactions((prev) => ({ ...prev, [id]: current }));
+      setRaffles((prev) => prev.map((r) => {
+        if (r?.id !== id) return r;
+        const counts = { ...(r.reactionCounts || {}) };
+        if (next) counts[next] = Math.max(0, (counts[next] ?? 0) - 1);
+        if (current) counts[current] = (counts[current] ?? 0) + 1;
+        return { ...r, reactionCounts: counts };
+      }));
+      if (!isAuthIssue) {
+        Alert.alert('Error', e?.message || 'No se pudo registrar la reacción.');
+      }
     } finally {
       setReactingIds((prev) => {
         const nextSet = new Set(prev);
@@ -185,7 +218,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         return nextSet;
       });
     }
-  }, [api, load]);
+  }, [api]);
 
   useFocusEffect(
     useCallback(() => {
@@ -216,7 +249,9 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
           })
           .slice()
           .sort((a, b) => {
-            if (filter === 'cheap') return Number(a.price || 0) - Number(b.price || 0);
+            const ap = Number(a?.price ?? a?.ticketPrice ?? a?.ticket_price ?? 0) || 0;
+            const bp = Number(b?.price ?? b?.ticketPrice ?? b?.ticket_price ?? 0) || 0;
+            if (filter === 'cheap') return ap - bp;
             if (filter === 'closing') return new Date(a.endDate || 0) - new Date(b.endDate || 0);
             return 0;
         })}
@@ -344,11 +379,23 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         }
         renderItem={({ item }) => {
             const stats = item.stats || {};
-            const total = item.totalTickets || stats.total || 0;
-            const sold = stats.sold || 0;
+          const total = Number(item?.totalTickets ?? stats.total ?? 0) || 0;
+          const sold = Number(item?.soldTickets ?? stats.sold ?? 0) || 0;
             const remaining = stats.remaining ?? (total ? Math.max(total - sold, 0) : 0);
             const percentLeft = total ? Math.max(0, Math.min(100, (remaining / total) * 100)) : 0;
             const lowStock = total && percentLeft <= 10;
+
+          const priceValue = Number(item?.price ?? item?.ticketPrice ?? item?.ticket_price ?? 0) || 0;
+          const endMs = Date.parse(item?.endDate);
+          const endedByTime = Number.isFinite(endMs) && endMs > 0 && endMs < Date.now();
+          const status = String(item?.status || '').toLowerCase();
+          const isActive = status === 'active' && !endedByTime;
+          const isAgotada = isActive && ((item?.isSoldOut === true) || Number(remaining) === 0);
+          const isClosed = !isActive;
+          const playDisabled = isClosed || isAgotada;
+          const showDescription = !!String(item?.description || '').trim();
+
+          const barFillColor = percentLeft >= 70 ? '#22c55e' : percentLeft >= 35 ? '#fbbf24' : '#ef4444';
 
             const reactionCounts = item.reactionCounts || {};
             const likeCount = reactionCounts.LIKE ?? 0;
@@ -406,10 +453,16 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                                 <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '900' }}>Ver perfil</Text>
                               </TouchableOpacity>
                             )}
+
                           </View>
                       </View>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setPostMenuRaffle(item);
+                        setPostMenuVisible(true);
+                      }}
+                    >
                         <Ionicons name="ellipsis-horizontal" size={20} color="#fff" />
                     </TouchableOpacity>
                 </View>
@@ -489,36 +542,49 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                         </TouchableOpacity>
                     </View>
                     <TouchableOpacity 
-                        onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}
-                        style={{ backgroundColor: palette.primary, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20 }}
+                      disabled={playDisabled}
+                      onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}
+                      style={{ backgroundColor: palette.primary, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, opacity: playDisabled ? 0.55 : 1 }}
                     >
-                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>Jugar</Text>
+                      <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>
+                        {isAgotada ? 'AGOTADA' : isClosed ? 'CERRADA' : 'Jugar'}
+                      </Text>
                     </TouchableOpacity>
                 </View>
 
                 {/* Content */}
                 <View style={{ paddingHorizontal: 12, paddingBottom: 16 }}>
                     <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 4 }}>{item.title}</Text>
-                    <TouchableOpacity
-                      disabled={!item?.user?.id}
-                      activeOpacity={0.85}
-                      onPress={() => item.user && setViewProfileId(item.user.id)}
-                    >
-                      <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={2}>
-                          <Text style={{ fontWeight: 'bold', color: '#fff' }}>{item.user?.name || 'MegaRifas'} </Text>
+                    {showDescription && (
+                      <TouchableOpacity
+                        disabled={!item?.user?.id}
+                        activeOpacity={0.85}
+                        onPress={() => item.user && setViewProfileId(item.user.id)}
+                      >
+                        <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={2}>
                           {item.description}
-                      </Text>
-                    </TouchableOpacity>
+                        </Text>
+                      </TouchableOpacity>
+                    )}
                     
                     <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>
-                        {formatMoneyVES((item?.ticketPrice ?? item?.price) || 0, { decimals: 0 })}
-                      </Text>
-                      {((item?.isSoldOut === true) || remaining === 0 || String(item?.status || '').toLowerCase() !== 'active') ? (
-                        <Text style={{ color: '#fecaca', fontSize: 12, fontWeight: '800' }}>Cerrada / Agotados</Text>
+                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(priceValue, { decimals: 0 })}</Text>
+                      {isAgotada ? (
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.14)', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.35)' }}>
+                          <Text style={{ color: '#fecaca', fontSize: 11, fontWeight: '900' }}>AGOTADA</Text>
+                        </View>
                       ) : (
-                        <View style={{ width: 120, height: 8, backgroundColor: '#ef4444', borderRadius: 4, overflow: 'hidden' }}>
-                          <View style={{ width: `${(remaining / (item.totalTickets || 1)) * 100}%`, height: '100%', backgroundColor: '#22c55e' }} />
+                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
+                          <View style={{ width: 150, height: 10, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.22)', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                            <View
+                              style={{
+                                height: '100%',
+                                width: `${Math.max(2, percentLeft)}%`,
+                                backgroundColor: barFillColor,
+                                borderRadius: 999
+                              }}
+                            />
+                          </View>
                         </View>
                       )}
                     </View>
@@ -580,6 +646,70 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
             />
           </View>
         </View>
+      </Modal>
+
+      <Modal
+        visible={postMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setPostMenuVisible(false);
+          setPostMenuRaffle(null);
+        }}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => {
+            setPostMenuVisible(false);
+            setPostMenuRaffle(null);
+          }}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' }}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={[styles.card, { borderTopLeftRadius: 16, borderTopRightRadius: 16 }]}>
+            <View style={styles.sectionRow}>
+              <Text style={styles.section}>Opciones</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setPostMenuVisible(false);
+                  setPostMenuRaffle(null);
+                }}
+              >
+                <Ionicons name="close" size={20} color={palette.text} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              disabled={!postMenuRaffle?.id || !postMenuRaffle?.user?.id}
+              onPress={() => {
+                const raffle = postMenuRaffle;
+                setPostMenuVisible(false);
+                setPostMenuRaffle(null);
+                if (!raffle?.id || !raffle?.user?.id) return;
+                navigation.navigate('Report', {
+                  raffleId: raffle.id,
+                  raffleTitle: raffle?.title || 'Rifa',
+                  reportedUserId: raffle.user.id,
+                  reportedUserName: raffle.user?.name || ''
+                });
+              }}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14 }}
+            >
+              <Ionicons name="flag-outline" size={20} color="#f87171" />
+              <Text style={{ color: '#fff', fontWeight: '800', marginLeft: 12, flex: 1 }}>Denunciar y reportar</Text>
+              <Ionicons name="chevron-forward" size={18} color={palette.muted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                setPostMenuVisible(false);
+                setPostMenuRaffle(null);
+              }}
+              style={{ marginTop: 8, paddingVertical: 12, alignItems: 'center' }}
+            >
+              <Text style={{ color: palette.muted, fontWeight: '700' }}>Cancelar</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
       <Modal visible={helpVisible} transparent animationType="fade" onRequestClose={() => setHelpVisible(false)}>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 20 }}>

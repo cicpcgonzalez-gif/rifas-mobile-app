@@ -15,6 +15,7 @@ import {
   StyleSheet,
   Switch,
   Animated,
+  Dimensions,
   Modal,
   Platform
 } from 'react-native';
@@ -42,6 +43,27 @@ const splitCsv = (value) => {
 const isSuperadminRole = (role) => {
   const normalized = String(role || '').trim().toLowerCase();
   return normalized === 'superadmin' || normalized === 'super_admin' || normalized === 'super-admin';
+};
+
+const normalizeBoolean = (value) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  if (typeof value === 'number') return value === 1;
+  return false;
+};
+
+const normalizeSmtpFromServer = (smtp) => {
+  const safe = smtp && typeof smtp === 'object' ? smtp : {};
+  const portNumber = Number(safe.port);
+  return {
+    host: typeof safe.host === 'string' ? safe.host : '',
+    port: Number.isFinite(portNumber) && portNumber > 0 ? String(portNumber) : '587',
+    user: typeof safe.user === 'string' ? safe.user : '',
+    pass: typeof safe.pass === 'string' ? safe.pass : '',
+    secure: normalizeBoolean(safe.secure),
+    fromName: typeof safe.fromName === 'string' ? safe.fromName : '',
+    fromEmail: typeof safe.fromEmail === 'string' ? safe.fromEmail : ''
+  };
 };
 
 const normalizeRaffle = (raffle) => {
@@ -348,8 +370,85 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [loadingSuper, setLoadingSuper] = useState(false);
   const [mailLogs, setMailLogs] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [actingReportId, setActingReportId] = useState(null);
   const [createForm, setCreateForm] = useState({ email: '', password: '', role: 'user', firstName: '', lastName: '', active: true });
   const [creating, setCreating] = useState(false);
+
+  const loadReports = useCallback(async () => {
+    if (!isSuperadmin) return;
+    setReportsLoading(true);
+    try {
+      const { res, data } = await api('/superadmin/reports?status=open');
+      if (res.ok && Array.isArray(data)) setReports(data);
+      else setReports([]);
+    } catch (e) {
+      setReports([]);
+      Alert.alert('Error', e?.message || 'No se pudieron cargar los reportes.');
+    } finally {
+      setReportsLoading(false);
+    }
+  }, [api, isSuperadmin]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!isSuperadmin) return;
+    try {
+      const { res, data } = await api('/superadmin/audit/actions');
+      if (res.ok && Array.isArray(data)) setAuditLogs(data);
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [api, isSuperadmin]);
+
+  const loadMailLogs = useCallback(async () => {
+    if (!isSuperadmin) return;
+    try {
+      const { res, data } = await api('/superadmin/mail/logs');
+      if (res.ok && Array.isArray(data)) setMailLogs(data);
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [api, isSuperadmin]);
+
+  const setReportStatus = useCallback(async (reportId, status) => {
+    if (!reportId) return;
+    if (!isSuperadmin) return;
+    setActingReportId(reportId);
+    try {
+      const { res, data } = await api(`/superadmin/reports/${reportId}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      if (res.ok) {
+        quickNotify('Actualizado');
+        loadReports();
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo actualizar el reporte.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'No se pudo actualizar el reporte.');
+    } finally {
+      setActingReportId(null);
+    }
+  }, [api, isSuperadmin, loadReports, quickNotify]);
+
+  useEffect(() => {
+    if (!isSuperadmin) return;
+    if (!activeSection) return;
+
+    const section = String(activeSection);
+    const shouldPoll = section === 'sa_reports' || section === 'sa_audit' || section === 'sa_mail';
+    if (!shouldPoll) return;
+
+    const intervalMs = section === 'sa_reports' ? 15_000 : 20_000;
+    const tick = () => {
+      if (section === 'sa_reports') loadReports();
+      if (section === 'sa_audit') loadAuditLogs();
+      if (section === 'sa_mail') loadMailLogs();
+    };
+
+    tick();
+    const id = setInterval(tick, intervalMs);
+    return () => clearInterval(id);
+  }, [activeSection, isSuperadmin, loadReports, loadAuditLogs, loadMailLogs]);
   const [smtpForm, setSmtpForm] = useState({ host: '', port: '587', user: '', pass: '', secure: false, fromName: '', fromEmail: '' });
   const [savingSmtp, setSavingSmtp] = useState(false);
   const [techSupportForm, setTechSupportForm] = useState({ phone: '', email: '' });
@@ -416,6 +515,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         items.push({ id: 'sa_modules', title: 'Módulos', icon: 'layers-outline', color: '#4ade80' });
       }
       items.push({ id: 'sa_mail', title: 'Logs de Correo', icon: 'mail-open-outline', color: '#f472b6', requiresSuperadmin: true });
+      items.push({ id: 'sa_reports', title: 'Denuncias y reportes', icon: 'flag-outline', color: '#fb7185', requiresSuperadmin: true });
       // items.push({ id: 'sa_actions', title: 'Acciones Críticas', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true }); // ELIMINADO (Fusionado con Auditoría)
     }
     
@@ -449,6 +549,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
+  const [publishPreviewVisible, setPublishPreviewVisible] = useState(false);
   const [showLotteryModal, setShowLotteryModal] = useState(false);
   const [startPickerVisible, setStartPickerVisible] = useState(false);
   const [endPickerVisible, setEndPickerVisible] = useState(false);
@@ -768,21 +869,6 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       if (res.ok && Array.isArray(data)) {
         const normalized = data.map(normalizeRaffle).filter(Boolean);
         setRaffles(normalized);
-        if (!selectedRaffle && normalized.length) {
-          const first = normalized[0];
-          setSelectedRaffle(first);
-          setStyleForm({
-            raffleId: first.id,
-            bannerImage: first.style?.bannerImage || '',
-            gallery: ensureArray(first.style?.gallery),
-            themeColor: first.style?.themeColor || '#2563eb',
-            accentColor: first.style?.accentColor || '#10b981',
-            headline: first.style?.headline || '',
-            ctaText: first.style?.ctaText || '',
-            whatsapp: first.style?.whatsapp || '',
-            instagram: first.style?.instagram || ''
-          });
-        }
       } else {
         setRaffles([]);
       }
@@ -928,7 +1014,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       if (s1.res.ok && s1.data) {
         setBranding((b) => ({ ...b, ...(s1.data?.branding || {}) }));
         setModules(s1.data?.modules || {});
-        if (s1.data?.smtp) setSmtpForm(s => ({ ...s, ...s1.data?.smtp }));
+        if (s1.data?.smtp) setSmtpForm(s => ({ ...s, ...normalizeSmtpFromServer(s1.data.smtp) }));
         if (s1.data?.techSupport) setTechSupportForm(s => ({ ...s, ...s1.data?.techSupport }));
 
         const limit = s1.data?.company?.planConfig?.unlimitedWeeklyRaffleLimit;
@@ -991,7 +1077,18 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   const saveSmtp = async () => {
     setSavingSmtp(true);
-    const { res, data } = await api('/superadmin/settings/smtp', { method: 'PATCH', body: JSON.stringify(smtpForm) });
+    const portNumber = Number(String(smtpForm.port || '').trim());
+    const payload = {
+      host: String(smtpForm.host || '').trim(),
+      port: Number.isFinite(portNumber) ? portNumber : 587,
+      secure: !!smtpForm.secure,
+      user: String(smtpForm.user || '').trim(),
+      pass: String(smtpForm.pass || ''),
+      fromName: String(smtpForm.fromName || '').trim(),
+      fromEmail: String(smtpForm.fromEmail || '').trim()
+    };
+
+    const { res, data } = await api('/superadmin/settings/smtp', { method: 'PATCH', body: JSON.stringify(payload) });
     if (res.ok) Alert.alert('Listo', 'Configuración SMTP guardada.');
     else Alert.alert('Error', data?.error || 'No se pudo guardar SMTP.');
     setSavingSmtp(false);
@@ -1260,9 +1357,10 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         bannerAssetRef.current = asset;
         // Para rifas: evitar fallas del endpoint de uploads. Normalizar localmente a dataURL.
         const processed = await normalizeImage(asset, {
-          maxWidth: 1100,
-          compress: 0.7,
-          maxChars: 750_000
+          maxWidth: 900,
+          compress: 0.6,
+          maxChars: 320_000,
+          maxIterations: 6
         });
         if (processed) setStyleForm((s) => ({ ...s, bannerImage: processed }));
       } catch (e) {
@@ -1287,9 +1385,10 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       try {
         // Para rifas: evitar fallas del endpoint de uploads. Normalizar localmente a dataURL.
         const processed = await normalizeImage(asset, {
-          maxWidth: 1000,
-          compress: 0.65,
-          maxChars: 550_000
+          maxWidth: 820,
+          compress: 0.55,
+          maxChars: 260_000,
+          maxIterations: 6
         });
         if (processed) {
           galleryAssetsRef.current = [...ensureArray(galleryAssetsRef.current), asset];
@@ -1370,6 +1469,16 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const resetRaffleForm = () => {
     setRaffleForm({ id: null, title: '', price: '', description: '', totalTickets: '', startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
     setRaffleErrors({});
+  };
+
+  const resetRaffleDraft = () => {
+    resetRaffleForm();
+    setStyleForm({ raffleId: null, bannerImage: '', gallery: [], themeColor: '#2563eb', terms: '', whatsapp: '', instagram: '' });
+    bannerAssetRef.current = null;
+    galleryAssetsRef.current = [];
+    setBankSettings({ bankName: '', accountName: '', accountNumber: '', accountType: '', cedula: '', phone: '' });
+    setStartDateValue(new Date());
+    setEndDateValue(new Date());
   };
 
   const submitRaffle = async () => {
@@ -1456,20 +1565,68 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       if (raffleId) {
         const buildStylePayload = (nextBannerImage, nextGalleryImages) => ({
           style: {
-            bannerImage: nextBannerImage,
-            gallery: nextGalleryImages,
+            bannerImage: nextBannerImage || '',
+            gallery: ensureArray(nextGalleryImages).filter(Boolean),
             themeColor: styleForm.themeColor,
             whatsapp: styleForm.whatsapp,
             instagram: styleForm.instagram,
-            paymentMethods: raffleForm.paymentMethods,
-            digits: raffleForm.digits,
-            startDate: raffleForm.startDate,
-            endDate: raffleForm.endDate,
-            securityCode: raffleForm.securityCode,
-            instantWins: instantWinsArray,
-            minTickets: Number(raffleForm.minTickets) || 1
+            paymentMethods: raffleForm.paymentMethods
           }
         });
+
+        const clampNumber = (n, min, max) => Math.max(min, Math.min(max, n));
+        const hasLocalAssets = () => {
+          const bannerAsset = bannerAssetRef.current;
+          const galleryAssets = ensureArray(galleryAssetsRef.current);
+          const hasBanner = !!bannerAsset?.uri;
+          const hasAnyGallery = galleryAssets.some((a) => !!a?.uri);
+          return hasBanner || hasAnyGallery;
+        };
+
+        const recompressFromAssets = async ({ targetTotalChars }) => {
+          const bannerAsset = bannerAssetRef.current;
+          const galleryAssets = ensureArray(galleryAssetsRef.current).filter((a) => !!a?.uri);
+          const count = (bannerAsset?.uri ? 1 : 0) + galleryAssets.length;
+
+          const safeTotal = Number.isFinite(Number(targetTotalChars)) ? Number(targetTotalChars) : 800_000;
+          const perImageMax = clampNumber(Math.floor(safeTotal / Math.max(1, count)), 110_000, 260_000);
+          const bannerMax = clampNumber(perImageMax + 60_000, 140_000, 320_000);
+
+          let nextBanner = finalBannerImage;
+          let nextGallery = finalGalleryImages;
+
+          if (bannerAsset?.uri) {
+            nextBanner = await normalizeImage(bannerAsset, {
+              maxWidth: 900,
+              compress: 0.58,
+              maxChars: bannerMax,
+              maxIterations: 7
+            });
+          }
+
+          if (galleryAssets.length) {
+            nextGallery = [];
+            for (const asset of galleryAssets) {
+              const img = await normalizeImage(asset, {
+                maxWidth: 820,
+                compress: 0.52,
+                maxChars: perImageMax,
+                maxIterations: 7
+              });
+              if (img) nextGallery.push(img);
+            }
+          }
+
+          // Persistir la nueva compresión en el estado (para que al editar quede igual)
+          setStyleForm((s) => ({
+            ...s,
+            ...(nextBanner ? { bannerImage: nextBanner } : {}),
+            ...(Array.isArray(nextGallery) ? { gallery: nextGallery } : {})
+          }));
+
+          finalBannerImage = nextBanner;
+          finalGalleryImages = nextGallery;
+        };
 
         quickNotify('Subiendo imágenes...');
         let finalBannerImage = bannerImage;
@@ -1478,50 +1635,23 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         // Intento 1: subir con lo ya procesado
         let styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(buildStylePayload(finalBannerImage, finalGalleryImages)) });
 
-        // Si el backend responde 413, recomprimir automáticamente y reintentar 1 vez
-        if (!styleRes.res.ok && (styleRes.res.status === 413 || /entity too large|request entity too large/i.test(String(styleRes.data?.error || '')))) {
-          quickNotify('Comprimiendo más las imágenes...');
-
+        // Si falla (por tamaño u otra validación), recomprimir automáticamente y reintentar 1 vez.
+        // Así el usuario puede subir fotos grandes y la app se encarga de optimizarlas.
+        if (!styleRes.res.ok && isCreate && hasLocalAssets()) {
+          quickNotify('Optimizando imágenes...');
           try {
-            const bannerAsset = bannerAssetRef.current;
-            if (bannerAsset?.uri) {
-              finalBannerImage = await normalizeImage(bannerAsset, {
-                maxWidth: 900,
-                compress: 0.55,
-                maxChars: 320_000,
-                maxIterations: 5
-              });
-            }
-
-            const galleryAssets = ensureArray(galleryAssetsRef.current);
-            if (galleryAssets.length) {
-              finalGalleryImages = [];
-              for (const asset of galleryAssets) {
-                if (!asset?.uri) continue;
-                const img = await normalizeImage(asset, {
-                  maxWidth: 820,
-                  compress: 0.5,
-                  maxChars: 260_000,
-                  maxIterations: 5
-                });
-                if (img) finalGalleryImages.push(img);
-              }
-            }
-
-            // Persistir la nueva compresión en el estado (para que al editar quede igual)
-            setStyleForm((s) => ({
-              ...s,
-              ...(finalBannerImage ? { bannerImage: finalBannerImage } : {}),
-              ...(Array.isArray(finalGalleryImages) ? { gallery: finalGalleryImages } : {})
-            }));
+            const totalImages = (bannerAssetRef.current?.uri ? 1 : 0) + ensureArray(galleryAssetsRef.current).filter((a) => !!a?.uri).length;
+            // Mantener el JSON en un tamaño razonable ajustando el máximo por imagen según cantidad.
+            const targetTotalChars = totalImages >= 6 ? 650_000 : totalImages >= 3 ? 750_000 : 850_000;
+            await recompressFromAssets({ targetTotalChars });
           } catch (e) {
             console.log('Auto-compress retry failed:', e);
           }
-
           styleRes = await api(`/admin/raffles/${raffleId}`, { method: 'PATCH', body: JSON.stringify(buildStylePayload(finalBannerImage, finalGalleryImages)) });
         }
 
         if (!styleRes.res.ok) {
+          console.log('Style upload failed:', styleRes.res.status, styleRes.data);
           if (styleRes.res.status === 413 || /entity too large|request entity too large/i.test(String(styleRes.data?.error || ''))) {
             styleError = 'Las imágenes aún son demasiado pesadas. El sistema intentó reducirlas automáticamente. Prueba con fotos más ligeras.';
           } else {
@@ -1548,14 +1678,27 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         if (activationError) parts.push(`Publicación: ${activationError}`);
         Alert.alert('Rifa guardada con advertencia', `La rifa se guardó, pero hubo un problema:\n\n- ${parts.join('\n- ')}\n\nPuedes intentar editar la rifa nuevamente.`);
       } else {
-        Alert.alert('Listo', raffleForm.id ? 'Rifa actualizada correctamente.' : 'Rifa creada correctamente.', [
-          { text: 'OK', onPress: () => {
-              resetRaffleForm();
-              loadRaffles();
-              loadTickets();
-              setActiveSection(null);
-          }}
-        ]);
+        // Al publicar (crear) queremos dejar el formulario limpio inmediatamente,
+        // sin esperar el OK del usuario.
+        if (isCreate) {
+          setPublishPreviewVisible(false);
+          resetRaffleDraft();
+          loadRaffles();
+          loadTickets();
+          Alert.alert('Listo', 'Rifa creada correctamente.');
+        } else {
+          Alert.alert('Listo', 'Rifa actualizada correctamente.', [
+            {
+              text: 'OK',
+              onPress: () => {
+                setPublishPreviewVisible(false);
+                resetRaffleDraft();
+                loadRaffles();
+                loadTickets();
+              }
+            }
+          ]);
+        }
       }
     } else {
       if (res.status === 413 || /entity too large|request entity too large/i.test(String(data?.error || ''))) {
@@ -1568,6 +1711,57 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       }
     }
     setSavingRaffle(false);
+  };
+
+  const validateRaffleForPreview = () => {
+    const errors = {};
+    if (!raffleForm.title) errors.title = true;
+    if (!raffleForm.price) errors.price = true;
+    if (!raffleForm.lottery) errors.lottery = true;
+    if (!raffleForm.description) errors.description = true;
+    setRaffleErrors(errors);
+    if (Object.keys(errors).length > 0) return false;
+
+    const isCreate = !raffleForm.id;
+    const galleryImages = ensureArray(styleForm.gallery).filter(Boolean);
+    const bannerImage = styleForm.bannerImage || galleryImages[0] || '';
+    if (isCreate && !bannerImage && galleryImages.length === 0) {
+      Alert.alert('Faltan imágenes', 'Debes subir al menos 1 imagen antes de publicar la rifa.');
+      return false;
+    }
+    return true;
+  };
+
+  const openPublishPreview = () => {
+    const isCreate = !raffleForm.id;
+    if (!isCreate) return submitRaffle();
+    if (!validateRaffleForPreview()) return;
+    setPublishPreviewVisible(true);
+  };
+
+  const buildPreviewRaffle = () => {
+    const galleryImages = ensureArray(styleForm.gallery).filter(Boolean);
+    const bannerImage = styleForm.bannerImage || galleryImages[0] || '';
+    const gallery = galleryImages.length ? galleryImages : (bannerImage ? [bannerImage] : []);
+    const price = raffleForm.price ? Number(raffleForm.price) : 0;
+    const totalTickets = raffleForm.totalTickets ? Number(raffleForm.totalTickets) : 0;
+    return {
+      id: 'preview',
+      title: raffleForm.title,
+      description: raffleForm.description,
+      price,
+      totalTickets,
+      stats: { total: totalTickets, sold: 0, remaining: totalTickets },
+      style: { bannerImage, gallery, themeColor: styleForm.themeColor },
+      user: {
+        id: profile?.id,
+        name: profile?.name,
+        avatar: profile?.avatar,
+        identityVerified: !!profile?.identityVerified,
+        isBoosted: !!profile?.isBoosted,
+        boostEndsAt: profile?.boostEndsAt
+      }
+    };
   };
 
   const onStartDateChange = (_event, selectedDate) => {
@@ -1761,7 +1955,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
           style: 'destructive',
           onPress: async () => {
             setSavingRaffle(true);
-            const { res, data } = await api(`/admin/raffles/${raffleId}`, { method: 'DELETE' });
+            const { res, data } = await api(`/raffles/${raffleId}`, { method: 'DELETE' });
             if (res.ok) {
               Alert.alert('Eliminada', 'La rifa ha sido eliminada.');
               loadRaffles();
@@ -2929,15 +3123,117 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 24 }}>
                 <FilledButton
                   title={savingRaffle ? 'Guardando...' : raffleForm.id ? 'Actualizar rifa' : 'Crear rifa'}
-                  onPress={submitRaffle}
+                  onPress={openPublishPreview}
                   loading={savingRaffle}
                   disabled={savingRaffle}
                   icon={<Ionicons name={raffleForm.id ? 'create-outline' : 'add-circle-outline'} size={18} color="#fff" />}
                 />
                 {raffleForm.id ? (
-                  <OutlineButton title="Nueva" onPress={resetRaffleForm} icon={<Ionicons name="refresh-outline" size={18} color={palette.primary} />} />
+                  <OutlineButton title="Nueva" onPress={resetRaffleDraft} icon={<Ionicons name="refresh-outline" size={18} color={palette.primary} />} />
                 ) : null}
               </View>
+
+              <Modal visible={publishPreviewVisible} transparent animationType="slide" onRequestClose={() => setPublishPreviewVisible(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' }}>
+                  <TouchableOpacity activeOpacity={1} onPress={() => setPublishPreviewVisible(false)} style={{ flex: 1 }}>
+                    <View style={{ flex: 1 }} />
+                  </TouchableOpacity>
+
+                  <View style={{ backgroundColor: '#0b1220', borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', maxHeight: '92%' }}>
+                    <View style={{ paddingTop: 10, paddingBottom: 12, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
+                      <View style={{ alignItems: 'center' }}>
+                        <View style={{ width: 48, height: 5, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.18)' }} />
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+                        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Vista previa</Text>
+                        <TouchableOpacity onPress={() => setPublishPreviewVisible(false)} style={{ padding: 6 }}>
+                          <Ionicons name="close" size={22} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                        Al publicar, el rifero no podrá eliminar su rifa.
+                      </Text>
+                    </View>
+
+                    <ScrollView showsVerticalScrollIndicator={false}>
+                      {(() => {
+                        const item = buildPreviewRaffle();
+                        const gallery = Array.isArray(item.style?.gallery) ? item.style.gallery : [];
+                        const sellerName = item.user?.name || 'MegaRifas';
+                        const previewWidth = Dimensions.get('window').width;
+                        return (
+                          <View>
+                            {/* Header tipo feed */}
+                            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}>
+                              <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', marginRight: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden' }}>
+                                {item.user?.avatar ? (
+                                  <Image source={{ uri: item.user.avatar }} style={{ width: 34, height: 34, borderRadius: 17 }} />
+                                ) : (
+                                  <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 14 }}>{String(sellerName).charAt(0).toUpperCase() || 'M'}</Text>
+                                )}
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>{sellerName}</Text>
+                                <Text style={{ color: '#94a3b8', fontSize: 11 }} numberOfLines={1}>Así se verá en Rifas</Text>
+                              </View>
+                            </View>
+
+                            {/* Imagen */}
+                            <View style={{ width: '100%', aspectRatio: 1, backgroundColor: '#000' }}>
+                              {gallery.length > 0 ? (
+                                <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
+                                  {gallery.map((img, idx) => (
+                                    <Image
+                                      key={idx}
+                                      source={{ uri: img }}
+                                      style={{ width: previewWidth, height: '100%', backgroundColor: '#000' }}
+                                      resizeMode="contain"
+                                    />
+                                  ))}
+                                </ScrollView>
+                              ) : (
+                                <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                                  <Ionicons name="image-outline" size={48} color="rgba(255,255,255,0.2)" />
+                                </View>
+                              )}
+                            </View>
+
+                            {/* Contenido */}
+                            <View style={{ padding: 12 }}>
+                              <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 4 }} numberOfLines={1}>{item.title}</Text>
+                              <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={3}>
+                                <Text style={{ fontWeight: 'bold', color: '#fff' }}>{sellerName} </Text>
+                                {item.description}
+                              </Text>
+
+                              <View style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(item.price, { decimals: 0 })}</Text>
+                                {item.totalTickets ? (
+                                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>{item.totalTickets} tickets</Text>
+                                ) : (
+                                  <Text style={{ color: '#94a3b8', fontSize: 12 }}>Tickets: —</Text>
+                                )}
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })()}
+                    </ScrollView>
+
+                    <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', gap: 10 }}>
+                      <OutlineButton title="Cancelar" onPress={() => setPublishPreviewVisible(false)} />
+                      <FilledButton
+                        title="Publicar"
+                        onPress={() => {
+                          setPublishPreviewVisible(false);
+                          submitRaffle();
+                        }}
+                        icon={<Ionicons name="rocket-outline" size={18} color="#fff" />}
+                      />
+                    </View>
+                  </View>
+                </View>
+              </Modal>
 
               {(() => {
                 const p = profile?.adminPlan || null;
@@ -3329,6 +3625,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               <TextInput style={styles.input} placeholder="Puerto (587)" value={String(smtpForm.port)} onChangeText={(v) => setSmtpForm(s => ({ ...s, port: v }))} keyboardType="numeric" />
               <TextInput style={styles.input} placeholder="Usuario" value={smtpForm.user} onChangeText={(v) => setSmtpForm(s => ({ ...s, user: v }))} autoCapitalize="none" />
               <TextInput style={styles.input} placeholder="Contraseña" value={smtpForm.pass} onChangeText={(v) => setSmtpForm(s => ({ ...s, pass: v }))} secureTextEntry />
+              <TextInput style={styles.input} placeholder="From Name (MegaRifas)" value={smtpForm.fromName} onChangeText={(v) => setSmtpForm(s => ({ ...s, fromName: v }))} />
+              <TextInput style={styles.input} placeholder="From Email (no-reply@megarifas.com.ve)" value={smtpForm.fromEmail} onChangeText={(v) => setSmtpForm(s => ({ ...s, fromEmail: v }))} autoCapitalize="none" />
               
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <Text style={{ color: '#fff' }}>Conexión Segura (SSL/TLS)</Text>
@@ -3418,6 +3716,83 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   <Text style={{ color: palette.muted, fontSize: 10 }}>{new Date(log.timestamp).toLocaleString()}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {activeSection === 'sa_reports' && (
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Denuncias y reportes</Text>
+              </View>
+
+              <Text style={styles.muted}>Se muestran reportes abiertos (pendientes de revisión).</Text>
+
+              {reportsLoading ? (
+                <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                  <ActivityIndicator color={palette.primary} />
+                  <Text style={[styles.muted, { marginTop: 10 }]}>Cargando...</Text>
+                </View>
+              ) : reports && reports.length ? (
+                reports.map((r) => (
+                  <View key={r.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginTop: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14, flex: 1 }} numberOfLines={2}>{String(r.reason || 'Reporte')}</Text>
+                      <Text style={{ color: palette.muted, fontSize: 10 }}>{r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}</Text>
+                    </View>
+
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={2}>
+                        Reportado: {r?.reported?.name || '—'} ({r?.reported?.email || '—'})
+                      </Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={2}>
+                        Reportado por: {r?.reporter?.name || '—'} ({r?.reporter?.email || '—'})
+                      </Text>
+                      {r?.raffle?.title ? (
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={2}>
+                          Rifa: {r.raffle.title}
+                        </Text>
+                      ) : null}
+                      {r?.details ? (
+                        <Text style={{ color: '#e2e8f0', fontSize: 12, marginTop: 6 }}>
+                          {String(r.details)}
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                      <TouchableOpacity
+                        onPress={() => setReportStatus(r.id, 'reviewed')}
+                        disabled={actingReportId === r.id}
+                        style={{ flex: 1, backgroundColor: 'rgba(34,197,94,0.18)', borderWidth: 1, borderColor: 'rgba(34,197,94,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: actingReportId === r.id ? 0.6 : 1 }}
+                      >
+                        <Text style={{ color: '#bbf7d0', fontWeight: '900' }}>Revisado</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setReportStatus(r.id, 'resolved')}
+                        disabled={actingReportId === r.id}
+                        style={{ flex: 1, backgroundColor: 'rgba(59,130,246,0.18)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: actingReportId === r.id ? 0.6 : 1 }}
+                      >
+                        <Text style={{ color: '#bfdbfe', fontWeight: '900' }}>Resuelto</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => setReportStatus(r.id, 'dismissed')}
+                        disabled={actingReportId === r.id}
+                        style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.18)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: actingReportId === r.id ? 0.6 : 1 }}
+                      >
+                        <Text style={{ color: '#fecaca', fontWeight: '900' }}>Descartar</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+              ) : (
+                <View style={{ padding: 20, alignItems: 'center' }}>
+                    <Ionicons name="flag-outline" size={48} color={palette.muted} />
+                    <Text style={{ color: palette.muted, marginTop: 12 }}>No hay reportes pendientes.</Text>
+                </View>
+              )}
             </View>
           )}
 

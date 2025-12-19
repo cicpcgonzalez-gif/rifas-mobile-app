@@ -37,8 +37,14 @@ export function useApi(accessToken, refreshToken, persistTokens) {
         data = {};
       }
 
+      const tokenErrorText = String(data?.error || '').toLowerCase();
+      const isTokenInvalid = tokenErrorText.includes('token inválido') || tokenErrorText.includes('token invalido') || tokenErrorText.includes('invalid token');
+      const isTokenExpired = tokenErrorText.includes('expir') || tokenErrorText.includes('expired');
+      const shouldAttemptRefresh = res.status === 401;
+      const shouldForceLogout = (res.status === 401 || res.status === 403) && (isTokenInvalid || isTokenExpired);
+
       // Attempt silent refresh on 401 once
-      if (res.status === 401 && refreshToken) {
+      if (shouldAttemptRefresh && refreshToken) {
         try {
           const refreshRes = await fetch(`${API_URL}/auth/refresh`, {
             method: 'POST',
@@ -70,6 +76,20 @@ export function useApi(accessToken, refreshToken, persistTokens) {
             data: { error: 'Sesión expirada. Inicia sesión nuevamente.' }
           };
         }
+      }
+
+      // Si el token ya no es válido (por cambio de base/secret o expiración) y no se pudo refrescar,
+      // cerrar sesión para forzar login limpio (evita errores repetidos en acciones como "like").
+      if (shouldForceLogout && typeof persistTokens === 'function') {
+        try {
+          await persistTokens(null, null, null, { remember: false });
+        } catch (_e) {
+          // Silenciar
+        }
+        return {
+          res: { ok: false, status: res.status },
+          data: { error: 'Sesión expirada. Inicia sesión nuevamente.' }
+        };
       }
 
       return { res, data };

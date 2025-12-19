@@ -4,7 +4,7 @@
 		{
 			"label": "Build APK (Android)",
 			"type": "shell",
-			"command": "cd android; .\\gradlew.bat assembleRelease",
+			"command": "cd C:\\rifas-mobile\\android; .\\gradlew.bat assembleRelease",
 			"isBackground": false,
 			"problemMatcher": [
 				"$gradle"
@@ -12,9 +12,9 @@
 			"group": "build"
 		},
 		{
-			"label": "Build APK (Android - Short Path)",
+			"label": "Build APK (Android - Workspace Path)",
 			"type": "shell",
-			"command": "cd C:\\w\\megarifas\\android; .\\gradlew.bat assembleRelease",
+			"command": "cd android; .\\gradlew.bat assembleRelease",
 			"isBackground": false,
 			"problemMatcher": [
 				"$gradle"

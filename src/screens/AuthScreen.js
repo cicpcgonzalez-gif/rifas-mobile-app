@@ -152,13 +152,12 @@ export default function AuthScreen({ onAuth }) {
       }
 
       const token = data.token || data.accessToken;
-      const user = data.user || { 
-        email: form.email, 
-        name: 'Usuario', 
-        role: form.email.includes('admin') ? 'superadmin' : 'user',
-        firstName: 'Admin',
-        lastName: 'User'
-      }; 
+      const fallbackName = String(form.email || '').split('@')[0] || 'Usuario';
+      const user = data.user || {
+        email: form.email,
+        name: fallbackName,
+        role: 'user'
+      };
       
       await onAuth(token, token, user, rememberMe);
       

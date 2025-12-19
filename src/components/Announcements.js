@@ -32,10 +32,18 @@ export default function Announcements({ api, onShowProfile }) {
     });
 
     try {
-      const { res } = await api(`/announcements/${id}/react`, { method: 'POST', body: JSON.stringify({ type }) });
+      const { res, data } = await api(`/announcements/${id}/react`, { method: 'POST', body: JSON.stringify({ type }) });
       if (res.ok) {
         // Refrescar en background para cuadrar contadores del servidor
         load();
+      } else {
+        // Si es tema de sesión/token, no mostrar alert aquí. El manejo global llevará a login.
+        const msg = String(data?.error || '').toLowerCase();
+        const isAuthIssue = res.status === 401 || res.status === 403 || msg.includes('sesión expirada') || msg.includes('sesion expirada') || msg.includes('token');
+        if (!isAuthIssue) {
+          // Mantener silencioso por UX (anuncios no es crítico)
+          console.log('Announcement react error:', res.status, data);
+        }
       }
     } finally {
       setReactingIds((prev) => {
@@ -75,7 +83,7 @@ export default function Announcements({ api, onShowProfile }) {
                 <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: palette.surface, marginRight: 8 }} />
               )}
               <View>
-                <Text style={{ color: palette.text, fontWeight: 'bold' }}>{item.admin?.name || 'Admin'}</Text>
+                <Text style={{ color: palette.text, fontWeight: 'bold' }}>{item.admin?.name || 'Rifero'}</Text>
                 <Text style={{ color: palette.muted, fontSize: 10 }}>{new Date(item.createdAt).toLocaleDateString()}</Text>
               </View>
             </TouchableOpacity>

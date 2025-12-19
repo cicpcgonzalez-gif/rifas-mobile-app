@@ -6,9 +6,29 @@ android/jdk17.zip
 android/jdk17_temp/
 **/jdk17/
 
-# Local build artifacts / diagnostics
+# IDE
+.idea/
+
+# Backups locales
+android_backup/
+config.js.bak
+
+# Bundles/artefactos generados
+dist/
+app_universal/
+*.hbc
+*.hbc.map
+
+# Archivos grandes locales
+app.zip
+bundletool-all-*.jar
+*.aab
+
+# APKs
 *.apk
 app-release.apk
+
+# Local build artifacts / diagnostics
 builds/
 android/app/build/
 logcat*.txt

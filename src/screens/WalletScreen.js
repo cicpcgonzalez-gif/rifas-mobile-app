@@ -277,58 +277,6 @@ export default function WalletScreen({ api }) {
         </View>
 
         <View style={[styles.card, styles.glassCard]}>
-          <Text style={styles.section}>Actividad Reciente</Text>
-          <View style={{ marginTop: 8 }}>
-            {movements.length === 0 ? (
-              <Text style={styles.muted}>No hay movimientos recientes.</Text>
-            ) : (
-              movements.map((m) => (
-                <View key={m.id} style={styles.movementRow}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                    <View style={[styles.movementBadge, { backgroundColor: m.type === 'deposit' ? 'rgba(16,185,129,0.15)' : 'rgba(248,113,113,0.15)', borderColor: m.type === 'deposit' ? 'rgba(16,185,129,0.35)' : 'rgba(248,113,113,0.35)' }]}> 
-                      <Ionicons name={m.type === 'deposit' ? 'arrow-up' : 'arrow-down'} size={16} color={m.type === 'deposit' ? '#10b981' : '#f87171'} />
-                    </View>
-                    <View style={{ flex: 1, paddingRight: 10 }}>
-                      <Text style={styles.itemTitle}>{m.type === 'deposit' ? 'Recarga' : 'Movimiento'}</Text>
-
-                      {m.reference ? (
-                        <Text style={styles.muted} numberOfLines={1} ellipsizeMode="tail">
-                          {m.reference}
-                        </Text>
-                      ) : null}
-
-                      {(() => {
-                        const p = String(m?.provider || '').trim().toLowerCase();
-                        const providerLabel =
-                          p === 'mobile_payment'
-                            ? 'Pago móvil'
-                            : p === 'transfer'
-                              ? 'Transferencia'
-                              : p === 'zelle'
-                                ? 'Zelle'
-                                : p === 'binance'
-                                  ? 'Binance'
-                                  : p;
-
-                        const base = `${new Date(m.createdAt).toLocaleDateString()} · ${m.type === 'deposit' ? 'Entrada' : 'Salida'}`;
-                        const extra = providerLabel ? ` · ${providerLabel}` : '';
-                        return <Text style={styles.muted}>{base}{extra}</Text>;
-                      })()}
-                    </View>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ color: m.type === 'deposit' ? '#10b981' : '#f87171', fontWeight: '800' }}>
-                      {m.type === 'deposit' ? '+' : ''}{formatMoneyVES(m.amount)}
-                    </Text>
-                    <Text style={[styles.statusPill, m.status === 'approved' ? styles.statusApproved : m.status === 'pending' ? styles.statusPending : styles.statusRejected]}>{m.status}</Text>
-                  </View>
-                </View>
-              ))
-            )}
-          </View>
-        </View>
-
-        <View style={[styles.card, styles.glassCard]}>
           <Text style={styles.section}>Historial de Pagos</Text>
           {payments.length === 0 ? <Text style={styles.muted}>No tienes pagos registrados.</Text> : null}
           {payments.map((p) => {

@@ -850,12 +850,13 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                             <Image source={{ uri: banner }} style={[styles.bannerImage, { height: 180 }]} resizeMode="cover" />
                           ) : null}
                           <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 4 }]} numberOfLines={1}>{item.title}</Text>
-                          <Text style={styles.muted}>
-                            ACTIVA • Tickets: {sold}/{total} • Restantes: {remaining}
-                          </Text>
-                          {item?.ticketPrice != null ? (
-                            <Text style={[styles.muted, { marginTop: 6 }]}>Precio: {formatMoneyVES(item.ticketPrice || item.price || 0, { decimals: 0 })}</Text>
-                          ) : null}
+                          
+                          <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(item.ticketPrice || item.price || 0, { decimals: 0 })}</Text>
+                            <View style={{ width: 120, height: 8, backgroundColor: '#ef4444', borderRadius: 4, overflow: 'hidden' }}>
+                              <View style={{ width: `${total ? Math.max(0, Math.min(100, (remaining / total) * 100)) : 0}%`, height: '100%', backgroundColor: '#22c55e' }} />
+                            </View>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}

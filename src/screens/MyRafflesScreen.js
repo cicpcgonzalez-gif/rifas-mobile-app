@@ -29,17 +29,37 @@ const formatMoney = (value) => {
   return n.toFixed(2);
 };
 
-const LEMAS = [
-  "¡La suerte está contigo hoy!", "Confía en tu número, brilla fuerte.", "Hoy puede ser tu gran día.",
-  "La esperanza siempre gana.", "Tu ticket guarda una sorpresa.", "El destino sonríe a los valientes.",
-  "Cada número es una oportunidad.", "La fortuna favorece a los soñadores.", "Tu suerte está en camino.",
-  "El éxito comienza con la confianza.", "Este ticket puede cambiar tu vida.", "La suerte se construye con fe.",
-  "Tu número tiene energía positiva.", "La fortuna está más cerca de lo que piensas.", "Confía, tu momento llegará.",
-  "El azar premia a los persistentes.", "Tu ticket es un símbolo de esperanza.", "La suerte siempre encuentra su camino.",
-  "Hoy tu número puede ser el ganador.", "La magia de la rifa está contigo."
+const LUCKY_MOTTOS = [
+  '¡La suerte está contigo hoy!',
+  'Confía en tu número, brilla fuerte.',
+  'Hoy puede ser tu gran día.',
+  'La esperanza siempre gana.',
+  'Tu ticket guarda una sorpresa.',
+  'El destino sonríe a los valientes.',
+  'Cada número es una oportunidad.',
+  'La fortuna favorece a los soñadores.',
+  'Tu suerte está en camino.',
+  'El éxito comienza con la confianza.',
+  'Este ticket puede cambiar tu vida.',
+  'La suerte se construye con fe.',
+  'Tu número tiene energía positiva.',
+  'La fortuna está más cerca de lo que piensas.',
+  'Confía, tu momento llegará.',
+  'El azar premia a los persistentes.',
+  'Tu ticket es un símbolo de esperanza.',
+  'La suerte siempre encuentra su camino.',
+  'Hoy tu número puede ser el ganador.',
+  'La magia de la rifa está contigo.'
 ];
 
-const getRandomLema = () => LEMAS[Math.floor(Math.random() * LEMAS.length)];
+const stableMottoForSeed = (seed) => {
+  const s = String(seed || '0');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  }
+  return LUCKY_MOTTOS[h % LUCKY_MOTTOS.length];
+};
 
 export default function MyRafflesScreen({ api, navigation }) {
   const [items, setItems] = useState([]);
@@ -82,7 +102,29 @@ export default function MyRafflesScreen({ api, navigation }) {
     const unitPrice = raffle?.price;
     const totalPrice = Number.isFinite(Number(unitPrice)) ? Number(unitPrice) * qty : null;
     const serialShort = item.serialNumber ? String(item.serialNumber).slice(-8).toUpperCase() : (item.id ? String(item.id) : '—');
-    const whenLabel = formatReceiptDateTime(item.createdAt);
+
+    const purchasedAt = item?.payment?.purchasedAt || item.createdAt;
+    const whenLabel = formatReceiptDateTime(purchasedAt);
+
+    const sellerName = raffle?.user?.name || '—';
+    const sellerSecurityId = raffle?.user?.securityId || '';
+
+    const prov = String(item?.payment?.method || '').trim().toLowerCase();
+    const providerLabel =
+      prov === 'wallet'
+        ? 'Saldo'
+        : prov === 'mobile_payment'
+          ? 'Pago móvil'
+          : prov === 'transfer'
+            ? 'Transferencia'
+            : prov === 'zelle'
+              ? 'Zelle'
+              : prov === 'binance'
+                ? 'Binance'
+                : prov || '—';
+
+    const totalSpent = item?.payment?.totalSpent;
+    const motto = stableMottoForSeed(item?.serialNumber || `${raffle?.id || ''}-${serialShort}`);
 
     return (
       <View style={{
@@ -106,6 +148,10 @@ export default function MyRafflesScreen({ api, navigation }) {
               {!!raffle.description && (
                 <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 11, marginTop: 2 }} numberOfLines={2}>{raffle.description}</Text>
               )}
+
+              <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11, marginTop: 6 }} numberOfLines={1}>
+                Vendedor: {sellerName}{sellerSecurityId ? ` (${sellerSecurityId})` : ''}
+              </Text>
             </View>
             <View style={{
               paddingHorizontal: 10,
@@ -141,13 +187,21 @@ export default function MyRafflesScreen({ api, navigation }) {
               <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11 }}>Cantidad</Text>
               <Text style={{ color: '#0f172a', fontSize: 11, fontWeight: '800' }}>{qty}</Text>
             </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11 }}>Método de pago</Text>
+              <Text style={{ color: '#0f172a', fontSize: 11, fontWeight: '800' }}>{providerLabel}</Text>
+            </View>
+
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 }}>
               <Text style={{ color: 'rgba(15, 23, 42, 0.7)', fontSize: 11 }}>Precio unitario</Text>
               <Text style={{ color: '#0f172a', fontSize: 11, fontWeight: '800' }}>{formatMoney(unitPrice)}</Text>
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>TOTAL</Text>
-              <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>{totalPrice === null ? '—' : formatMoney(totalPrice)}</Text>
+              <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>
+                {totalSpent != null ? formatMoney(totalSpent) : (totalPrice === null ? '—' : formatMoney(totalPrice))}
+              </Text>
             </View>
           </View>
         </View>
@@ -167,6 +221,10 @@ export default function MyRafflesScreen({ api, navigation }) {
                 <ProgressBar progress={progress} color={isWinner ? '#fbbf24' : palette.accent} />
               </View>
             </View>
+          </View>
+
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ color: 'rgba(15, 23, 42, 0.75)', fontSize: 12, fontWeight: '800', textAlign: 'center' }}>{motto}</Text>
           </View>
 
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
