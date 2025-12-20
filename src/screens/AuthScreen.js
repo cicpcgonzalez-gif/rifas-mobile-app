@@ -294,7 +294,9 @@ export default function AuthScreen({ onAuth }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Código incorrecto');
-          await onAuth(data.token, data.token, data.user, rememberMe);
+        const token = data.token || data.accessToken;
+        const refreshToken = data.refreshToken || token;
+        await onAuth(token, refreshToken, data.user, rememberMe);
       setTwofaNeeded(false);
       setTwofaCode('');
       setTwofaUserId(null);
