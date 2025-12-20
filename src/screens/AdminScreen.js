@@ -2130,7 +2130,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         <SafeAreaView style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-              <View style={{ flex: 1 }} />
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 18 }}>
+                {isSuperadmin ? 'Superadmin' : 'Admin'}
+              </Text>
             </View>
             {techSupport && (
               <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
