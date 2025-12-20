@@ -543,7 +543,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                     </View>
                     <TouchableOpacity 
                       disabled={playDisabled}
-                      onPress={() => navigation.navigate('RaffleDetail', { raffle: item })}
+                      onPress={() => navigation.navigate('RaffleDetail', { raffle: item, startPurchase: true })}
                       style={{ backgroundColor: palette.primary, paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, opacity: playDisabled ? 0.55 : 1 }}
                     >
                       <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 12 }}>

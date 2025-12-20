@@ -25,7 +25,7 @@ import PublicProfileModal from '../components/PublicProfileModal';
 const { width } = Dimensions.get('window');
 
 export default function RaffleDetailScreen({ route, navigation, api }) {
-  const { raffle, ticket } = route.params || {};
+  const { raffle, ticket, startPurchase } = route.params || {};
   const getMinTickets = (r) => {
     const raw = r?.minTickets ?? r?.style?.minTickets;
     const n = Number(raw);
@@ -78,6 +78,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const ticketNumber = ticket?.number ?? (Array.isArray(ticket?.numbers) ? ticket.numbers[0] : ticket?.numbers);
   const userBoostActive = !!current?.user?.isBoosted;
   const boostEndsAt = current?.user?.boostEndsAt ? Date.parse(current.user.boostEndsAt) : 0;
+
+  const scrollRef = useRef(null);
+  const purchaseAnchorY = useRef(0);
+  const didAutoScrollPurchase = useRef(false);
 
   // Fetch full raffle details if missing critical data
   useEffect(() => {
@@ -150,7 +154,12 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     );
   }
 
-  const [showPurchase, setShowPurchase] = useState(false);
+  const [showPurchase, setShowPurchase] = useState(!!startPurchase);
+
+  useEffect(() => {
+    if (!startPurchase) return;
+    setShowPurchase(true);
+  }, [startPurchase]);
   
   // Report System
   const [reportVisible, setReportVisible] = useState(false);
@@ -328,7 +337,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView ref={scrollRef} contentContainerStyle={styles.scroll}>
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}>
             <Ionicons name="arrow-back" size={24} color="#fff" />
@@ -526,14 +535,21 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             </View>
           )}
 
-          <TextInput
+          <View
+            onLayout={(e) => {
+              const y = e?.nativeEvent?.layout?.y;
+              if (typeof y === 'number' && Number.isFinite(y)) purchaseAnchorY.current = y;
+            }}
+          >
+            <TextInput
             style={[styles.input, playDisabled ? { opacity: 0.6 } : null]}
             value={quantity}
             onChangeText={setQuantity}
             keyboardType="numeric"
             placeholder="Cantidad (Aleatoria)"
             editable={!playDisabled}
-          />
+            />
+          </View>
 
           {(!style.paymentMethods || style.paymentMethods.includes('wallet')) && (
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -552,6 +568,21 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             </View>
           )}
         </View>
+
+        {startPurchase && !didAutoScrollPurchase.current ? (
+          <View
+            onLayout={() => {
+              if (didAutoScrollPurchase.current) return;
+              didAutoScrollPurchase.current = true;
+              const y = purchaseAnchorY.current || 0;
+              requestAnimationFrame(() => {
+                try {
+                  scrollRef.current?.scrollTo({ y: Math.max(0, y - 20), animated: true });
+                } catch (_e) {}
+              });
+            }}
+          />
+        ) : null}
 
           {(!sellerPaymentMethods.length || sellerPaymentMethods.some(m => ['mobile_payment', 'zelle', 'binance', 'transfer'].includes(m))) && showPurchase && (
         <View style={styles.card}>
