@@ -255,25 +255,31 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const galleryAssetsRef = useRef([]);
   const [activeSection, setActiveSection] = useState(null);
   const isSuperadmin = isSuperadminRole(user?.role);
+
+  const normalizeDigits = useCallback((value) => String(value || '').replace(/\D/g, ''), []);
+  const normalizeLooseText = useCallback(
+    (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' '),
+    []
+  );
   
   // Reports System
-  const [reports, setReports] = useState([]);
-  const [loadingReports, setLoadingReports] = useState(false);
+  const [legacyReports, setLegacyReports] = useState([]);
+  const [legacyReportsLoading, setLegacyReportsLoading] = useState(false);
 
-  const loadReports = useCallback(async () => {
-    setLoadingReports(true);
+  const loadLegacyReports = useCallback(async () => {
+    setLegacyReportsLoading(true);
     try {
       const { res, data } = await api('/superadmin/reports?status=open');
       if (res.ok) {
-        setReports(data);
+        setLegacyReports(data);
       }
     } catch (err) {
       console.log('Error loading reports', err);
     }
-    setLoadingReports(false);
+    setLegacyReportsLoading(false);
   }, [api]);
 
-  const resolveReport = async (reportId, action) => {
+  const resolveLegacyReport = async (reportId, action) => {
     // action: 'resolved' | 'dismissed'
     const { res, data } = await api(`/superadmin/reports/${reportId}`, {
       method: 'PATCH',
@@ -281,7 +287,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     });
     if (res.ok) {
       Alert.alert('Éxito', `Reporte ${action === 'resolved' ? 'resuelto' : 'desestimado'}.`);
-      loadReports();
+      loadLegacyReports();
     } else {
       Alert.alert('Error', data.error || 'No se pudo actualizar el reporte.');
     }
@@ -501,8 +507,6 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (isSuperadmin) {
       // Superadmin siempre ve los bloques críticos aunque el backend no mande config
       items.push({ id: 'sa_users', title: 'Usuarios', icon: 'people-outline', color: '#22d3ee', requiresSuperadmin: true });
-      items.push({ id: 'reports', title: 'Reportes', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true });
-      items.push({ id: 'reports', title: 'Reportes', icon: 'alert-circle-outline', color: '#ef4444', requiresSuperadmin: true });
       items.push({ id: 'sa_tech_support', title: 'Soporte Técnico', icon: 'call-outline', color: '#38bdf8', requiresSuperadmin: true });
       items.push({ id: 'sa_smtp', title: 'Correo SMTP', icon: 'mail-outline', color: '#facc15', requiresSuperadmin: true });
       if (!modulesConfig || modulesConfig?.superadmin?.audit !== false) {
@@ -546,6 +550,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '', q: '' });
   const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
+  const [quickVerifierForm, setQuickVerifierForm] = useState({ cedula: '', firstName: '', lastName: '', phone: '', email: '' });
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
@@ -897,6 +902,10 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   }, [api, paymentFilters]);
 
   const loadTickets = useCallback(async () => {
+    if (!isSuperadmin && !String(ticketFilters?.raffleId || '').trim()) {
+      Alert.alert('Selecciona una rifa', 'Para ver/gestionar tickets debes elegir una rifa.');
+      return;
+    }
     setTicketsLoading(true);
     const params = new URLSearchParams();
     if (ticketFilters.raffleId) params.append('raffleId', ticketFilters.raffleId);
@@ -913,7 +922,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     const { res, data } = await api(`/admin/tickets${query}`);
     if (res.ok && Array.isArray(data)) setTickets(data);
     setTicketsLoading(false);
-  }, [api, ticketFilters]);
+  }, [api, ticketFilters, isSuperadmin]);
 
   const activeRafflesForTickets = useMemo(() => {
     const list = Array.isArray(raffles) ? raffles : [];
@@ -929,6 +938,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       });
   }, [raffles]);
 
+  useEffect(() => {
+    if (activeSection !== 'tickets') return;
+    if (isSuperadmin) return;
+    if (String(ticketFilters?.raffleId || '').trim()) return;
+    if (!activeRafflesForTickets.length) return;
+    setTicketFilters((s) => ({ ...s, raffleId: String(activeRafflesForTickets[0].id) }));
+  }, [activeSection, isSuperadmin, ticketFilters?.raffleId, activeRafflesForTickets]);
+
   const selectedTicketRaffleLabel = useMemo(() => {
     const id = String(ticketFilters?.raffleId || '').trim();
     if (!id) return 'Todas las rifas activas';
@@ -937,6 +954,94 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     const title = String(found.title || '').trim();
     return title ? `${title} (#${found.id})` : `Rifa #${found.id}`;
   }, [ticketFilters?.raffleId, activeRafflesForTickets]);
+
+  const allowedTicketRaffleIds = useMemo(() => {
+    const ids = new Set();
+    (Array.isArray(raffles) ? raffles : []).forEach((r) => {
+      if (r?.id != null) ids.add(String(r.id));
+    });
+    return ids;
+  }, [raffles]);
+
+  const getTicketSerial = useCallback((ticket) => {
+    const t = ticket && typeof ticket === 'object' ? ticket : {};
+    return t.serial || t.serialNumber || t.ticketSerial || t.id || '';
+  }, []);
+
+  const verifyQuickIdentity = useCallback(async () => {
+    const raffleId = String(ticketFilters?.raffleId || '').trim();
+    if (!raffleId) {
+      Alert.alert('Selecciona una rifa', 'El verificador requiere una rifa específica.');
+      return;
+    }
+
+    if (!isSuperadmin && !allowedTicketRaffleIds.has(raffleId)) {
+      Alert.alert('Acceso denegado', 'Solo puedes verificar tickets de tus propias rifas.');
+      return;
+    }
+
+    const cedula = normalizeDigits(quickVerifierForm.cedula);
+    const phone = normalizeDigits(quickVerifierForm.phone);
+    const email = normalizeLooseText(quickVerifierForm.email);
+    const firstName = normalizeLooseText(quickVerifierForm.firstName);
+    const lastName = normalizeLooseText(quickVerifierForm.lastName);
+
+    const hasAny = Boolean(cedula || phone || email || firstName || lastName);
+    if (!hasAny) {
+      Alert.alert('Completa un dato', 'Ingresa cédula, nombres, teléfono o email para verificar.');
+      return;
+    }
+
+    setVerifierLoading(true);
+    setVerifierResult(null);
+
+    try {
+      const params = new URLSearchParams();
+      params.append('raffleId', raffleId);
+      if (cedula) params.append('cedula', cedula);
+      if (phone) params.append('phone', phone);
+      if (email) params.append('email', email);
+      params.append('take', '500');
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const { res, data } = await api(`/admin/tickets${query}`);
+
+      if (!res.ok || !Array.isArray(data)) {
+        setVerifierResult({ status: 'not_found', matches: [] });
+        return;
+      }
+
+      const matches = data.filter((t) => {
+        const buyer = t?.buyer || t?.user || {};
+        const bCedula = normalizeDigits(buyer.cedula || buyer.phone || buyer.document || t.cedula);
+        const bPhone = normalizeDigits(buyer.phone || t.phone);
+        const bEmail = normalizeLooseText(buyer.email || t.email);
+        const bFirst = normalizeLooseText(buyer.firstName || buyer.name);
+        const bLast = normalizeLooseText(buyer.lastName);
+
+        if (cedula && bCedula !== cedula) return false;
+        if (phone && bPhone !== phone) return false;
+        if (email && bEmail !== email) return false;
+        if (firstName && (!bFirst || bFirst !== firstName)) return false;
+        if (lastName && (!bLast || bLast !== lastName)) return false;
+        return true;
+      });
+
+      if (matches.length) setVerifierResult({ status: 'found', matches });
+      else setVerifierResult({ status: 'not_found', matches: [] });
+    } catch (_e) {
+      setVerifierResult({ status: 'not_found', matches: [] });
+    } finally {
+      setVerifierLoading(false);
+    }
+  }, [
+    api,
+    ticketFilters?.raffleId,
+    allowedTicketRaffleIds,
+    isSuperadmin,
+    quickVerifierForm,
+    normalizeDigits,
+    normalizeLooseText
+  ]);
 
   const verifyQuickTicket = useCallback(async () => {
     const input = String(verifierInput || '').trim();
@@ -1976,12 +2081,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         <SafeAreaView style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
-              {activeSection && activeSection !== 'sa_users' ? (
-                <TouchableOpacity onPress={() => setActiveSection(null)} style={{ padding: 6, marginLeft: -6 }}>
-                  <Ionicons name="arrow-back" size={22} color="#fff" />
-                </TouchableOpacity>
-              ) : null}
-              <Text style={[styles.title, { marginBottom: 0 }]}>{isSuperadmin ? 'SUPERADMIN' : 'Perfil Admin'}</Text>
+              <View style={{ flex: 1 }} />
             </View>
             {techSupport && (
               <TouchableOpacity onPress={() => setSupportVisible(true)} style={{ padding: 8 }}>
@@ -1990,20 +2090,23 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
             )}
           </View>
 
+        {/* Nota: la vista antigua activeSection === 'reports' se mantiene en una sola instancia arriba.
+            El acceso principal para superadmin es 'sa_reports' (Denuncias y reportes). */}
+
         {activeSection === 'reports' && (
           <View style={{ flex: 1, paddingHorizontal: 16 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <TouchableOpacity onPress={() => setActiveSection(null)} style={{ marginRight: 12 }}>
-                <Ionicons name="arrow-back" size={24} color="#fff" />
+              <TouchableOpacity onPress={() => setActiveSection(null)} style={{ marginRight: 12, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
               </TouchableOpacity>
               <Text style={[styles.title, { marginBottom: 0 }]}>Reportes y Denuncias</Text>
             </View>
 
-            {loadingReports ? (
+            {legacyReportsLoading ? (
               <ActivityIndicator size="large" color={palette.primary} />
             ) : (
               <FlatList
-                data={reports}
+                data={legacyReports}
                 keyExtractor={(item) => String(item.id)}
                 ListEmptyComponent={<Text style={styles.muted}>No hay reportes pendientes.</Text>}
                 renderItem={({ item }) => (
@@ -2028,70 +2131,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                     <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
                       <TouchableOpacity 
-                        onPress={() => resolveReport(item.id, 'dismissed')}
+                        onPress={() => resolveLegacyReport(item.id, 'dismissed')}
                         style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
                       >
                         <Text style={{ color: '#fff', fontSize: 12 }}>Desestimar</Text>
                       </TouchableOpacity>
                       <TouchableOpacity 
-                        onPress={() => resolveReport(item.id, 'resolved')}
-                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef4444' }}
-                      >
-                        <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Resolver (Ban/Borrar)</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              />
-            )}
-          </View>
-        )}
-
-        {activeSection === 'reports' && (
-          <View style={{ flex: 1, paddingHorizontal: 16 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
-              <TouchableOpacity onPress={() => setActiveSection(null)} style={{ marginRight: 12 }}>
-                <Ionicons name="arrow-back" size={24} color="#fff" />
-              </TouchableOpacity>
-              <Text style={[styles.title, { marginBottom: 0 }]}>Reportes y Denuncias</Text>
-            </View>
-
-            {loadingReports ? (
-              <ActivityIndicator size="large" color={palette.primary} />
-            ) : (
-              <FlatList
-                data={reports}
-                keyExtractor={(item) => String(item.id)}
-                ListEmptyComponent={<Text style={styles.muted}>No hay reportes pendientes.</Text>}
-                renderItem={({ item }) => (
-                  <View style={[styles.card, { marginBottom: 12 }]}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <Ionicons name="alert-circle" size={20} color="#ef4444" />
-                        <Text style={{ color: '#ef4444', fontWeight: 'bold', textTransform: 'uppercase' }}>{item.category || 'Reporte'}</Text>
-                      </View>
-                      <Text style={{ color: palette.muted, fontSize: 12 }}>{new Date(item.createdAt).toLocaleDateString()}</Text>
-                    </View>
-                    
-                    <Text style={{ color: '#fff', marginBottom: 8 }}>{item.comment || 'Sin detalles.'}</Text>
-                    
-                    {item.raffle && (
-                      <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 8, borderRadius: 8, marginBottom: 12 }}>
-                        <Text style={{ color: palette.muted, fontSize: 12 }}>Rifa Reportada:</Text>
-                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>{item.raffle.title}</Text>
-                        <Text style={{ color: palette.muted, fontSize: 12 }}>ID: {item.raffle.id}</Text>
-                      </View>
-                    )}
-
-                    <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
-                      <TouchableOpacity 
-                        onPress={() => resolveReport(item.id, 'dismissed')}
-                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)' }}
-                      >
-                        <Text style={{ color: '#fff', fontSize: 12 }}>Desestimar</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        onPress={() => resolveReport(item.id, 'resolved')}
+                        onPress={() => resolveLegacyReport(item.id, 'resolved')}
                         style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef4444' }}
                       >
                         <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>Resolver (Ban/Borrar)</Text>
@@ -2107,11 +2153,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         {activeSection === 'sa_users' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => {
-                    if (viewUser) setViewUser(null);
-                    else setActiveSection(null);
-                  }}>
-                    <Ionicons name="arrow-back" size={24} color="#fff" />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (viewUser) setViewUser(null);
+                      else setActiveSection(null);
+                    }}
+                    style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
                   </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>
                     {viewUser ? 'Hoja de Vida' : 'Gestión de Usuarios'}
@@ -2317,7 +2366,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         ) : activeSection === 'tickets' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Gestión de Tickets</Text>
               </View>
               
@@ -2331,7 +2382,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                     return (
                       <View style={{ marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? t.serialNumber ?? '0', raffleDigits)}</Text>
+                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? '0', raffleDigits)}</Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: statusColor }}>
                             <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time'} size={14} color={statusColor} />
                             <Text style={{ color: statusColor, fontWeight: '700', marginLeft: 6 }}>{t.status}</Text>
@@ -2356,26 +2407,72 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   <>
                     {/* VERIFICADOR RÁPIDO */}
                     <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: 16, borderRadius: 16, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
-                        <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 16, marginBottom: 8 }}>Verificador Rápido</Text>
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                        <TextInput 
-                            style={[styles.input, { flex: 1, marginBottom: 0, fontSize: 18, fontWeight: 'bold', textAlign: 'center' }]} 
-                            placeholder="Serial o # Ticket" 
-                            value={verifierInput} 
-                            onChangeText={setVerifierInput} 
-                            autoCapitalize="none"
-                        />
-                        <TouchableOpacity 
-                            onPress={verifyQuickTicket}
-                            disabled={verifierLoading}
-                            style={{ backgroundColor: palette.primary, paddingHorizontal: 20, justifyContent: 'center', borderRadius: 12, opacity: verifierLoading ? 0.7 : 1 }}
+                        <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 16, marginBottom: 6 }}>Verificador rápido</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Coincidencias 100% exactas por identidad (requiere rifa).</Text>
+
+                        <TouchableOpacity
+                          onPress={() => setRafflePickerVisible(true)}
+                          style={[
+                            styles.input,
+                            {
+                              marginBottom: 10,
+                              justifyContent: 'center'
+                            }
+                          ]}
                         >
-                            {verifierLoading ? (
-                              <ActivityIndicator color="#fff" />
-                            ) : (
-                              <Ionicons name="scan-outline" size={24} color="#fff" />
-                            )}
+                          <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Rifa (obligatoria)</Text>
+                          <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>
+                            {selectedTicketRaffleLabel}
+                          </Text>
                         </TouchableOpacity>
+
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                          <TextInput
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            placeholder="Cédula"
+                            value={quickVerifierForm.cedula}
+                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, cedula: v }))}
+                            keyboardType="numeric"
+                          />
+                          <TextInput
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            placeholder="Teléfono"
+                            value={quickVerifierForm.phone}
+                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, phone: v }))}
+                            keyboardType="phone-pad"
+                          />
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                          <TextInput
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            placeholder="Nombres"
+                            value={quickVerifierForm.firstName}
+                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, firstName: v }))}
+                          />
+                          <TextInput
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            placeholder="Apellidos"
+                            value={quickVerifierForm.lastName}
+                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, lastName: v }))}
+                          />
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                          <TextInput
+                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                            placeholder="Email"
+                            value={quickVerifierForm.email}
+                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, email: v }))}
+                            autoCapitalize="none"
+                          />
+                          <TouchableOpacity
+                            onPress={verifyQuickIdentity}
+                            disabled={verifierLoading}
+                            style={{ backgroundColor: palette.primary, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 12, opacity: verifierLoading ? 0.7 : 1 }}
+                          >
+                            {verifierLoading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900' }}>Verificar</Text>}
+                          </TouchableOpacity>
                         </View>
                         
                         {verifierResult && (
@@ -2397,7 +2494,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                                     const raffleTitle = t.raffle?.title || t.raffle || t.raffleTitle || '—';
                                     const sellerName = seller.name || seller.email || '—';
                                     const createdAt = t.createdAt ? new Date(t.createdAt).toLocaleString() : '—';
-                                    const serial = t.serialNumber || t.serial || '—';
+                                    const serial = getTicketSerial(t) || '—';
                                     const numLabel = t.number != null ? `#${formatTicketNumber(t.number)}` : '—';
 
                                     return (
@@ -2444,22 +2541,24 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           </Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity
-                          onPress={() => setTicketFilters((s) => ({ ...s, raffleId: '' }))}
-                          style={[
-                            styles.input,
-                            {
-                              flexGrow: 1,
-                              flexBasis: '45%',
-                              marginBottom: 0,
-                              justifyContent: 'center',
-                              alignItems: 'center'
-                            }
-                          ]}
-                        >
-                          <Text style={{ color: '#fff', fontWeight: '800' }}>Limpiar rifa</Text>
-                          <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Ver todas</Text>
-                        </TouchableOpacity>
+                        {isSuperadmin ? (
+                          <TouchableOpacity
+                            onPress={() => setTicketFilters((s) => ({ ...s, raffleId: '' }))}
+                            style={[
+                              styles.input,
+                              {
+                                flexGrow: 1,
+                                flexBasis: '45%',
+                                marginBottom: 0,
+                                justifyContent: 'center',
+                                alignItems: 'center'
+                              }
+                            ]}
+                          >
+                            <Text style={{ color: '#fff', fontWeight: '800' }}>Limpiar rifa</Text>
+                            <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Ver todas</Text>
+                          </TouchableOpacity>
+                        ) : null}
 
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={ticketFilters.reference} onChangeText={(v) => setTicketFilters(s => ({ ...s, reference: v }))} />
                         <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Teléfono" value={ticketFilters.phone} onChangeText={(v) => setTicketFilters(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
@@ -2481,15 +2580,17 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>Esto llena el filtro automáticamente</Text>
 
                           <ScrollView style={{ marginTop: 12 }}>
-                            <TouchableOpacity
-                              onPress={() => {
-                                setTicketFilters((s) => ({ ...s, raffleId: '' }));
-                                setRafflePickerVisible(false);
-                              }}
-                              style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 10 }}
-                            >
-                              <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>Todas las rifas activas</Text>
-                            </TouchableOpacity>
+                            {isSuperadmin ? (
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setTicketFilters((s) => ({ ...s, raffleId: '' }));
+                                  setRafflePickerVisible(false);
+                                }}
+                                style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 10 }}
+                              >
+                                <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>Todas las rifas activas</Text>
+                              </TouchableOpacity>
+                            ) : null}
 
                             {activeRafflesForTickets.map((r) => (
                               <TouchableOpacity
@@ -2569,7 +2670,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         ) : activeSection === 'payments' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Pagos Manuales</Text>
               </View>
               
@@ -2682,7 +2785,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         ) : activeSection === 'movements' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                </TouchableOpacity>
                 <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Movimientos</Text>
               </View>
 
@@ -2822,7 +2927,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               <SectionErrorBoundary label="Gestión de Rifas: formulario">
                 <>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                      <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                      <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                        <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                      </TouchableOpacity>
                       <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Crear o Editar Rifa</Text>
                   </View>
 
@@ -3367,7 +3474,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
           {activeSection === 'sa_tech_support' && (
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Soporte Técnico</Text>
               </View>
               <Text style={styles.muted}>Configura los canales de soporte para reportes de fallas.</Text>
@@ -3417,7 +3526,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
           {activeSection === 'news' && (
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Novedades</Text>
               </View>
               
@@ -3455,7 +3566,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
           {activeSection === 'dashboard' && (
             <View style={styles.card}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Dashboard</Text>
               </View>
 

@@ -86,6 +86,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   const [postMenuRaffle, setPostMenuRaffle] = useState(null);
 
   const [reactingIds, setReactingIds] = useState(new Set());
+  const reactingIdsRef = useRef(new Set());
   const [myReactions, setMyReactions] = useState({});
   const myReactionsRef = useRef({});
   useEffect(() => {
@@ -163,10 +164,17 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
 
   const reactToRaffle = useCallback(async (id, type) => {
     if (!id) return;
+    const current = myReactionsRef.current?.[id] || null;
+
+    // No permitir reaccionar dos veces con el mismo tipo (no toggle/off)
+    if (current === type) return;
+
+    // Evitar doble tap rápido mientras está en vuelo
+    if (reactingIdsRef.current.has(id)) return;
+    reactingIdsRef.current.add(id);
     setReactingIds((prev) => new Set(prev).add(id));
 
-    const current = myReactionsRef.current?.[id] || null;
-    const next = current === type ? null : type;
+    const next = type;
 
     // Optimista: actualizar contadores locales
     setMyReactions((prev) => ({ ...prev, [id]: next }));
@@ -179,7 +187,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
     }));
 
     try {
-      const { res, data } = await api(`/raffles/${id}/react`, { method: 'POST', body: JSON.stringify({ type }) });
+      const { res, data } = await api(`/raffles/${id}/react`, { method: 'POST', body: JSON.stringify({ type: next }) });
       if (!res.ok) {
         const msg = String(data?.error || '').toLowerCase();
         const isAuthIssue = res.status === 401 || res.status === 403 || msg.includes('sesión expirada') || msg.includes('sesion expirada') || msg.includes('token');
@@ -217,6 +225,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         nextSet.delete(id);
         return nextSet;
       });
+      reactingIdsRef.current.delete(id);
     }
   }, [api]);
 
@@ -445,15 +454,6 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                               </View>
                             )}
 
-                            {!!item.user?.id && (
-                              <TouchableOpacity
-                                onPress={() => setViewProfileId(item.user.id)}
-                                style={{ paddingHorizontal: 10, paddingVertical: 2, borderRadius: 999, backgroundColor: 'rgba(59,130,246,0.12)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.25)' }}
-                              >
-                                <Text style={{ color: '#93c5fd', fontSize: 10, fontWeight: '900' }}>Ver perfil</Text>
-                              </TouchableOpacity>
-                            )}
-
                           </View>
                       </View>
                     </TouchableOpacity>
@@ -522,7 +522,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
                     <View style={{ flexDirection: 'row', gap: 16 }}>
                     <TouchableOpacity
-                      disabled={reacting}
+                      disabled={reacting || currentReaction === 'LIKE'}
                       onPress={() => reactToRaffle(item.id, 'LIKE')}
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: reacting ? 0.7 : 1 }}
                     >
@@ -530,7 +530,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{likeCount}</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      disabled={reacting}
+                      disabled={reacting || currentReaction === 'HEART'}
                       onPress={() => reactToRaffle(item.id, 'HEART')}
                       style={{ flexDirection: 'row', alignItems: 'center', gap: 6, opacity: reacting ? 0.7 : 1 }}
                     >
@@ -575,15 +575,20 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                         </View>
                       ) : (
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                          <View style={{ width: 150, height: 10, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.22)', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
-                            <View
-                              style={{
-                                height: '100%',
-                                width: `${Math.max(2, percentLeft)}%`,
-                                backgroundColor: barFillColor,
-                                borderRadius: 999
-                              }}
-                            />
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 150, height: 10, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.22)', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                              <View
+                                style={{
+                                  height: '100%',
+                                  width: `${Math.max(2, percentLeft)}%`,
+                                  backgroundColor: barFillColor,
+                                  borderRadius: 999
+                                }}
+                              />
+                            </View>
+                            <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '800', marginLeft: 10, minWidth: 44, textAlign: 'right' }}>
+                              {`${Math.round(percentLeft)}%`}
+                            </Text>
                           </View>
                         </View>
                       )}

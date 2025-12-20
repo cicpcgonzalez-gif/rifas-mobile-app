@@ -10,7 +10,8 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
-  Linking
+  Linking,
+  Dimensions
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +24,8 @@ import { FilledButton } from '../components/UI';
 import { formatTicketNumber, formatMoneyVES } from '../utils';
 
 import { useNavigation } from '@react-navigation/native';
+
+const { width } = Dimensions.get('window');
 
 export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken, setPushToken, onLogout }) {
   const nav = useNavigation();
@@ -63,9 +66,9 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
   const [errorMsg, setErrorMsg] = useState('');
 
-  const isAdminOrSuperadmin = useMemo(() => {
+  const isOrganizerRole = useMemo(() => {
     const role = String(profile?.role || '').trim().toLowerCase();
-    return role === 'admin' || role === 'superadmin';
+    return role === 'admin' || role === 'superadmin' || role === 'organizer';
   }, [profile?.role]);
 
   const { activePublications, closedPublications } = useMemo(() => {
@@ -95,10 +98,10 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
       const user = d1;
       const role = String(user?.role || '').trim().toLowerCase();
-      const isAdmin = role === 'admin' || role === 'superadmin';
+  const isRifero = role === 'admin' || role === 'superadmin' || role === 'organizer';
 
       const requests = [api('/me/tickets'), api('/me/referrals')];
-      if (isAdmin && user?.id) requests.push(api(`/users/public/${user.id}/raffles`));
+      if (isRifero && user?.id) requests.push(api(`/users/public/${user.id}/raffles`));
       const [ticketsResp, referralsResp, pubsResp] = await Promise.all(requests);
 
       const { res: r2, data: d2 } = ticketsResp;
@@ -116,10 +119,10 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
       if (r2.ok && Array.isArray(d2)) setTickets(d2);
       else setTickets([]);
 
-      if (isAdmin) {
+      if (isRifero) {
         setMyPublicationsLoading(true);
         
-        // Fetch Boost Data
+        // Fetch Boost Data (solo para roles que publican)
         api('/boosts/me').then(({ res, data }) => {
           if (res.ok) setBoostData(data);
         });
@@ -149,6 +152,123 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
     }
     setLoading(false);
   }, [api]);
+
+  const normalizeSocials = useCallback((socials) => {
+    if (!socials || typeof socials !== 'object') return {};
+    const clean = {};
+
+    const setIf = (key, value) => {
+      const v = String(value ?? '').trim();
+      if (v) clean[key] = v;
+    };
+
+    if (socials.whatsapp != null) {
+      const digits = String(socials.whatsapp).replace(/\D/g, '');
+      if (digits) clean.whatsapp = digits;
+    }
+    if (socials.instagram != null) setIf('instagram', String(socials.instagram).replace(/^@/, ''));
+    if (socials.tiktok != null) setIf('tiktok', String(socials.tiktok).replace(/^@/, ''));
+    if (socials.telegram != null) setIf('telegram', String(socials.telegram).replace(/^@/, ''));
+
+    return clean;
+  }, []);
+
+  const renderPublicationCard = useCallback((r) => {
+    if (!r) return null;
+    const stats = r?.stats || {};
+    const total = Number(r?.totalTickets || stats.total || 0);
+    const sold = Number(stats.sold || r?.soldTickets || 0);
+    const remaining = Number(stats.remaining ?? (total ? Math.max(total - sold, 0) : 0));
+    const status = String(r?.status || '').toLowerCase();
+    const endMs = Date.parse(r?.endDate);
+    const endedByTime = Number.isFinite(endMs) && endMs > 0 && endMs < Date.now();
+    const isClosed = status !== 'active' || endedByTime;
+    const isAgotada = !isClosed && remaining === 0;
+
+    const gallery = Array.isArray(r?.style?.gallery) && r.style.gallery.length
+      ? r.style.gallery
+      : r?.style?.bannerImage
+        ? [r.style.bannerImage]
+        : [];
+
+    return (
+      <TouchableOpacity
+        key={`pub-${r.id}`}
+        activeOpacity={0.9}
+        onPress={() => nav.navigate('RaffleDetail', { raffle: r })}
+        style={{ marginBottom: 18, backgroundColor: '#1e293b', borderTopWidth: 1, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}>
+          <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center', marginRight: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', overflow: 'hidden' }}>
+            {profile?.avatar ? (
+              <Image source={{ uri: profile.avatar }} style={{ width: 32, height: 32, borderRadius: 16 }} />
+            ) : (
+              <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 14 }}>{String(profile?.name || 'M').charAt(0).toUpperCase()}</Text>
+            )}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>{profile?.name || 'Rifero'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+              {!!profile?.identityVerified && (
+                <Text style={{ color: '#94a3b8', fontSize: 10 }}>Verificado</Text>
+              )}
+              {isClosed && (
+                <View style={{ backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                  <Text style={{ color: '#fecaca', fontSize: 10, fontWeight: '900' }}>CERRADA</Text>
+                </View>
+              )}
+              {isAgotada && (
+                <View style={{ backgroundColor: 'rgba(239,68,68,0.12)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999 }}>
+                  <Text style={{ color: '#fecaca', fontSize: 10, fontWeight: '900' }}>AGOTADA</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={{ width: '100%', aspectRatio: 1, backgroundColor: '#000' }}>
+          {gallery.length > 0 ? (
+            <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
+              {gallery.map((img, idx) => (
+                <Image
+                  key={`${r.id}-img-${idx}`}
+                  source={{ uri: img }}
+                  style={{ width, height: '100%', backgroundColor: '#000' }}
+                  resizeMode="contain"
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Ionicons name="image-outline" size={48} color="rgba(255,255,255,0.2)" />
+            </View>
+          )}
+        </View>
+
+        <View style={{ paddingHorizontal: 12, paddingBottom: 16, paddingTop: 12 }}>
+          <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 4 }} numberOfLines={1}>{r.title}</Text>
+          {String(r.description || '').trim() ? (
+            <Text style={{ color: '#cbd5e1', fontSize: 14, lineHeight: 20 }} numberOfLines={3}>
+              {r.description}
+            </Text>
+          ) : null}
+
+          <View style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>
+              {(r.price ?? r.ticketPrice) != null ? formatMoneyVES(r.price ?? r.ticketPrice, { decimals: 0 }) : '—'}
+            </Text>
+            {isClosed ? (
+              <Text style={{ color: '#fecaca', fontSize: 12, fontWeight: '800' }}>CERRADA</Text>
+            ) : isAgotada ? (
+              <Text style={{ color: '#fecaca', fontSize: 12, fontWeight: '800' }}>AGOTADA</Text>
+            ) : (
+              <Text style={{ color: '#94a3b8', fontSize: 12 }}>{remaining} tickets restantes</Text>
+            )}
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }, [nav, profile, formatMoneyVES]);
 
   const pickKycImage = async (kind, { camera = false } = {}) => {
     try {
@@ -258,21 +378,24 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
     if (!profile) return;
     setSaving(true);
     try {
-      // Ensure socials is an object or string as expected. 
-      // Assuming backend handles JSON body correctly.
-      const payload = { 
+      // Evitar enviar campos que el backend suele bloquear (p.ej. email)
+      // y normalizar redes para que no rompan el PATCH.
+      const payload = {
         name: profile.name,
-        email: profile.email,
-        phone: profile.phone, 
-        address: profile.address, 
+        phone: profile.phone,
+        address: profile.address,
         cedula: profile.cedula,
         dob: profile.dob,
         bio: profile.bio,
-        socials: profile.socials || {},
-        avatar: profile.avatar,
+        socials: normalizeSocials(profile.socials),
         companyName: profile.companyName,
         rif: profile.rif
       };
+
+      // Enviar avatar solo si es un dataURL (cuando el usuario lo cambió localmente)
+      if (typeof profile.avatar === 'string' && profile.avatar.startsWith('data:image/')) {
+        payload.avatar = profile.avatar;
+      }
 
       const { res, data } = await api('/me', {
         method: 'PATCH',
@@ -282,7 +405,8 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
       if (res.ok) {
         Alert.alert('Guardado', 'Perfil actualizado correctamente.');
         setIsEditing(false);
-        if (onUserUpdate) onUserUpdate(data.user);
+        const updatedUser = data?.user || data;
+        if (onUserUpdate) onUserUpdate(updatedUser);
       } else {
         // Log error for debugging
         console.log('Save Profile Error:', data);
@@ -342,7 +466,7 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
   const showReceipt = (item) => {
     Alert.alert(
       'Recibo',
-      `Rifa: ${item.raffleTitle || ''}\nTicket: ${item.number ? formatTicketNumber(item.number, item.digits) : '—'}\nSerial: ${item.serialNumber || '—'}\nID comprador: ${profile?.securityId || profile?.publicId || '—'}\nEstado: ${item.status}\nFecha: ${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}\nVía: ${item.via || ''}`
+      `Rifa: ${item.raffleTitle || ''}\nTicket: ${item.number ? formatTicketNumber(item.number, item.digits) : '—'}\nSerial: ${item.serial || item.serialNumber || '—'}\nID comprador: ${profile?.securityId || profile?.publicId || '—'}\nEstado: ${item.status}\nFecha: ${item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}\nVía: ${item.via || ''}`
     );
   };
 
@@ -621,7 +745,7 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
             {/* EDIT FORM */}
             {isEditing && (
               <View style={[styles.card, styles.glassCard]}>
-                {(profile.role === 'admin' || profile.role === 'superadmin') ? (
+                {(profile.role === 'admin' || profile.role === 'superadmin' || profile.role === 'organizer') ? (
                   <>
                     <View style={{ flexDirection: 'row', marginBottom: 16, backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 8, padding: 4 }}>
                       <TouchableOpacity onPress={() => setBusinessTab('personal')} style={{ flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: businessTab === 'personal' ? palette.primary : 'transparent', borderRadius: 6 }}>
@@ -817,9 +941,9 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
 
             {/* REMOVED INLINE ADMIN RAFFLES */}
 
-            {(profile.role === 'admin' || profile.role === 'superadmin') && (
+            {(profile.role === 'admin' || profile.role === 'superadmin' || profile.role === 'organizer') && (
               <View style={[styles.card, styles.glassCard]}>
-                <Text style={[styles.section, { marginBottom: 10 }]}>Vista previa de publicaciones</Text>
+                <Text style={[styles.section, { marginBottom: 10 }]}>Mis publicaciones</Text>
 
                 {myPublicationsLoading ? (
                   <ActivityIndicator color={palette.primary} />
@@ -827,79 +951,20 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                   <>
                     <Text style={[styles.muted, { marginBottom: 8 }]}>Activas: {activePublications.length}</Text>
                     {activePublications.length === 0 ? <Text style={styles.muted}>No tienes publicaciones activas.</Text> : null}
-                    {activePublications.map((item) => {
-                      const stats = item?.stats || {};
-                      const total = Number(item?.totalTickets || stats.total || 0);
-                      const sold = Number(stats.sold || item?.soldTickets || 0);
-                      const remaining = Number(stats.remaining ?? (total ? Math.max(total - sold, 0) : 0));
-                      const gallery = Array.isArray(item?.style?.gallery) && item.style.gallery.length
-                        ? item.style.gallery
-                        : item?.style?.bannerImage
-                          ? [item.style.bannerImage]
-                          : [];
-                      const banner = gallery[0] || null;
-
-                      return (
-                        <TouchableOpacity
-                          key={item.id}
-                          activeOpacity={0.9}
-                          onPress={() => nav.navigate('RaffleDetail', { raffle: item })}
-                          style={[styles.card, styles.glassCard, { marginBottom: 10 }]}
-                        >
-                          {banner ? (
-                            <Image source={{ uri: banner }} style={[styles.bannerImage, { height: 180 }]} resizeMode="cover" />
-                          ) : null}
-                          <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 4 }]} numberOfLines={1}>{item.title}</Text>
-                          
-                          <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{formatMoneyVES(item.ticketPrice || item.price || 0, { decimals: 0 })}</Text>
-                            <View style={{ width: 120, height: 8, backgroundColor: '#ef4444', borderRadius: 4, overflow: 'hidden' }}>
-                              <View style={{ width: `${total ? Math.max(0, Math.min(100, (remaining / total) * 100)) : 0}%`, height: '100%', backgroundColor: '#22c55e' }} />
-                            </View>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
+                    {activePublications.map(renderPublicationCard)}
 
                     <View style={{ height: 14 }} />
 
                     <Text style={[styles.muted, { marginBottom: 8 }]}>Cerradas: {closedPublications.length}</Text>
                     {closedPublications.length === 0 ? <Text style={styles.muted}>No tienes publicaciones cerradas.</Text> : null}
-                    {closedPublications.map((item) => {
-                      const stats = item?.stats || {};
-                      const total = Number(item?.totalTickets || stats.total || 0);
-                      const sold = Number(stats.sold || item?.soldTickets || 0);
-                      const gallery = Array.isArray(item?.style?.gallery) && item.style.gallery.length
-                        ? item.style.gallery
-                        : item?.style?.bannerImage
-                          ? [item.style.bannerImage]
-                          : [];
-                      const banner = gallery[0] || null;
-
-                      return (
-                        <TouchableOpacity
-                          key={item.id}
-                          activeOpacity={0.9}
-                          onPress={() => nav.navigate('RaffleDetail', { raffle: item })}
-                          style={[styles.card, styles.glassCard, { marginBottom: 10 }]}
-                        >
-                          {banner ? (
-                            <Image source={{ uri: banner }} style={[styles.bannerImage, { height: 180 }]} resizeMode="cover" />
-                          ) : null}
-                          <Text style={[styles.itemTitle, { color: '#fff', marginBottom: 4 }]} numberOfLines={1}>{item.title}</Text>
-                          <Text style={styles.muted}>
-                            CERRADA • Tickets: {sold}/{total}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
+                    {closedPublications.map(renderPublicationCard)}
                   </>
                 )}
               </View>
             )}
 
             {/* ACTIVIDAD PARA USUARIOS (tickets) */}
-            {!isAdminOrSuperadmin && (
+            {!isOrganizerRole && (
               <View style={[styles.card, styles.glassCard]}>
                 <Text style={styles.section}>Actividad</Text>
                 {tickets.length === 0 ? (

@@ -24,9 +24,9 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
     if (visible && userId) {
       setLoading(true);
       Promise.all([
-        api(\/users/public/\\),
-        api(\/users/public/\/rating-summary\).catch(() => ({ res: {}, data: null })),
-        api(\/users/public/\/raffles\).catch(() => ({ res: {}, data: null }))
+        api(`/users/public/${userId}`),
+        api(`/users/public/${userId}/rating-summary`).catch(() => ({ res: {}, data: null })),
+        api(`/users/public/${userId}/raffles`).catch(() => ({ res: {}, data: null }))
       ]).then(([profileRes, ratingRes, rafflesRes]) => {
         if (profileRes.res?.ok) setProfile(profileRes.data);
         if (ratingRes?.res?.ok) setRatingSummary(ratingRes.data);
@@ -50,7 +50,7 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
 
   const StatItem = ({ label, value, icon, color }) => (
     <View style={localStyles.statItem}>
-      <View style={[localStyles.statIconContainer, { backgroundColor: \\20\, borderColor: \\40\ }]}>
+      <View style={[localStyles.statIconContainer, { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.18)' }]}>
         <Ionicons name={icon} size={18} color={color} />
       </View>
       <Text style={localStyles.statValue}>{value}</Text>
@@ -153,7 +153,7 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
                 />
                 <View style={localStyles.statDivider} />
                 <StatItem 
-                  label='Reputación' 
+                  label='Reputaciï¿½n' 
                   value={ratingSummary?.avgScore != null ? Number(ratingSummary.avgScore).toFixed(1) : (profile.reputationScore != null ? Number(profile.reputationScore).toFixed(1) : '')} 
                   icon='star' 
                   color='#F59E0B' 
@@ -163,7 +163,7 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
               {/* Bio */}
               {profile.bio && (
                 <View style={localStyles.bioContainer}>
-                  <Text style={localStyles.bioText}>'{profile.bio}'</Text>
+                  <Text style={localStyles.bioText}>{profile.bio}</Text>
                 </View>
               )}
 
@@ -171,22 +171,22 @@ export default function PublicProfileModal({ visible, onClose, userId, api }) {
               {profile.socials && (
                 <View style={localStyles.socialsContainer}>
                   {profile.socials.whatsapp && (
-                    <TouchableOpacity onPress={() => Linking.openURL(\https://wa.me/\\)} style={[localStyles.socialButton, { backgroundColor: '#25D366' }]}>
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://wa.me/${profile.socials.whatsapp}`)} style={[localStyles.socialButton, { backgroundColor: '#25D366' }]}>
                       <Ionicons name='logo-whatsapp' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.instagram && (
-                    <TouchableOpacity onPress={() => Linking.openURL(\https://instagram.com/\\)} style={[localStyles.socialButton, { backgroundColor: '#E1306C' }]}>
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://instagram.com/${profile.socials.instagram}`)} style={[localStyles.socialButton, { backgroundColor: '#E1306C' }]}>
                       <Ionicons name='logo-instagram' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.tiktok && (
-                    <TouchableOpacity onPress={() => Linking.openURL(\https://www.tiktok.com/@\\)} style={[localStyles.socialButton, { backgroundColor: '#000' }]}>
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@', '')}`)} style={[localStyles.socialButton, { backgroundColor: '#000' }]}>
                       <Ionicons name='logo-tiktok' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}
                   {profile.socials.telegram && (
-                    <TouchableOpacity onPress={() => Linking.openURL(\https://t.me/\\)} style={[localStyles.socialButton, { backgroundColor: '#0088cc' }]}>
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@', '')}`)} style={[localStyles.socialButton, { backgroundColor: '#0088cc' }]}>
                       <Ionicons name='paper-plane' size={20} color='#fff' />
                     </TouchableOpacity>
                   )}

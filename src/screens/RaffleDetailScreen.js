@@ -738,7 +738,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
               <Text style={{ color: palette.primary, fontSize: 32, fontWeight: 'bold' }}>
                 #{formatTicketNumber(ticketNumber, current.digits)}
               </Text>
-              <Text style={{ color: palette.muted, fontSize: 12 }}>Serial: {ticket.serialNumber}</Text>
+              <Text style={{ color: palette.muted, fontSize: 12 }}>Serial: {ticket.serial || ticket.serialNumber || '—'}</Text>
               {mySecurityId ? (
                 <Text style={{ color: palette.muted, fontSize: 12 }}>ID comprador: {mySecurityId}</Text>
               ) : null}

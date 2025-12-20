@@ -22,6 +22,14 @@ const REASONS = [
   { id: 'other', label: 'Otro' }
 ];
 
+const CATEGORY_BY_REASON = {
+  scam: 'fraud',
+  inappropriate: 'inappropriate',
+  misleading: 'misleading',
+  spam: 'spam',
+  other: 'other'
+};
+
 export default function ReportScreen({ navigation, route, api }) {
   const raffleId = route?.params?.raffleId ?? null;
   const raffleTitle = route?.params?.raffleTitle ?? '';
@@ -40,8 +48,8 @@ export default function ReportScreen({ navigation, route, api }) {
   }, [raffleTitle, reportedUserName]);
 
   const submit = async () => {
-    if (!reportedUserId) {
-      Alert.alert('Error', 'No se pudo identificar al usuario a reportar.');
+    if (!raffleId) {
+      Alert.alert('Error', 'No se pudo identificar la rifa a reportar.');
       return;
     }
     if (!reason) {
@@ -51,11 +59,14 @@ export default function ReportScreen({ navigation, route, api }) {
 
     setSubmitting(true);
     try {
+      const reasonLabel = REASONS.find((r) => r.id === reason)?.label || reason;
+      const comment = String(details || '').trim() || String(reasonLabel).trim();
+      const category = CATEGORY_BY_REASON[reason] || String(reason || '').trim() || 'other';
+
       const payload = {
-        reportedUserId,
         raffleId,
-        reason,
-        details: String(details || '').trim()
+        category,
+        comment
       };
 
       const { res, data } = await api('/reports', { method: 'POST', body: JSON.stringify(payload) });
@@ -64,7 +75,8 @@ export default function ReportScreen({ navigation, route, api }) {
           { text: 'OK', onPress: () => navigation.goBack() }
         ]);
       } else {
-        Alert.alert('Error', data?.error || 'No se pudo enviar la denuncia.');
+        console.log('Report submit failed:', { status: res?.status, data });
+        Alert.alert('Error', data?.error || data?.message || (res?.status ? `Error ${res.status}` : 'No se pudo enviar la denuncia.'));
       }
     } catch (e) {
       Alert.alert('Error', e?.message || 'No se pudo enviar la denuncia.');
