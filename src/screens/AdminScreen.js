@@ -40,6 +40,12 @@ const splitCsv = (value) => {
     .filter(Boolean);
 };
 
+const normalizePaymentMethods = (value) => {
+  if (Array.isArray(value)) return value.map((v) => String(v || '').trim()).filter(Boolean);
+  if (typeof value === 'string') return splitCsv(value);
+  return [];
+};
+
 const isSuperadminRole = (role) => {
   const normalized = String(role || '').trim().toLowerCase();
   return normalized === 'superadmin' || normalized === 'super_admin' || normalized === 'super-admin';
@@ -920,7 +926,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     params.append('take', '200');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`);
-    if (res.ok && Array.isArray(data)) setTickets(data);
+    if (res.ok && Array.isArray(data)) setTickets(data.filter((t) => t && typeof t === 'object'));
     setTicketsLoading(false);
   }, [api, ticketFilters, isSuperadmin]);
 
@@ -1010,7 +1016,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         return;
       }
 
-      const matches = data.filter((t) => {
+      const safeTickets = data.filter((t) => t && typeof t === 'object');
+
+      const matches = safeTickets.filter((t) => {
         const buyer = t?.buyer || t?.user || {};
         const bCedula = normalizeDigits(buyer.cedula || buyer.phone || buyer.document || t.cedula);
         const bPhone = normalizeDigits(buyer.phone || t.phone);
@@ -1516,7 +1524,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     // Al editar una rifa existente, no tenemos los assets originales locales.
     bannerAssetRef.current = null;
     galleryAssetsRef.current = [];
-    const stylePaymentMethods = Array.isArray(raffle?.style?.paymentMethods) ? raffle.style.paymentMethods : null;
+    const stylePaymentMethods = normalizePaymentMethods(raffle?.style?.paymentMethods);
+    const directPaymentMethods = normalizePaymentMethods(raffle?.paymentMethods);
     setRaffleForm({
       id: raffle.id,
       title: raffle.title || '',
@@ -1530,7 +1539,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       instantWins: raffle.instantWins ? raffle.instantWins.join(', ') : '',
       terms: raffle.terms || '',
       minTickets: String(raffle.minTickets || '1'),
-      paymentMethods: Array.isArray(raffle.paymentMethods) ? raffle.paymentMethods : (stylePaymentMethods || ['mobile_payment'])
+      paymentMethods: directPaymentMethods.length ? directPaymentMethods : (stylePaymentMethods.length ? stylePaymentMethods : ['mobile_payment'])
     });
   };
 
@@ -1558,7 +1567,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         themeColor: styleForm.themeColor,
         whatsapp: styleForm.whatsapp,
         instagram: styleForm.instagram,
-        paymentMethods: raffleForm.paymentMethods
+        paymentMethods: normalizePaymentMethods(raffleForm.paymentMethods)
       }
     };
     const { res, data } = await api(`/admin/raffles/${selectedRaffle.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
@@ -1572,7 +1581,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   };
 
   const resetRaffleForm = () => {
-    setRaffleForm({ id: null, title: '', price: '', description: '', totalTickets: '', startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
+    setRaffleForm({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
     setRaffleErrors({});
   };
 
@@ -1605,8 +1614,10 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       return Alert.alert('Faltan imágenes', 'Debes subir al menos 1 imagen antes de publicar la rifa.');
     }
     
-     quickNotify('Guardando rifa...');
-    if (raffleForm.paymentMethods.includes('mobile_payment')) {
+      quickNotify('Guardando rifa...');
+
+     const paymentMethods = normalizePaymentMethods(raffleForm.paymentMethods);
+     if (paymentMethods.includes('mobile_payment')) {
        await api('/me', { method: 'PATCH', body: JSON.stringify({ bankDetails: bankSettings }) });
     }
 
@@ -1627,7 +1638,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       instantWins: instantWinsArray,
       terms: raffleForm.terms,
       minTickets: Number(raffleForm.minTickets) || 1,
-      paymentMethods: raffleForm.paymentMethods
+      paymentMethods
     };
 
     const updatePayload = {
@@ -1675,7 +1686,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
             themeColor: styleForm.themeColor,
             whatsapp: styleForm.whatsapp,
             instagram: styleForm.instagram,
-            paymentMethods: raffleForm.paymentMethods
+            paymentMethods
           }
         });
 
@@ -2374,7 +2385,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               
               <FlatList
                 data={tickets}
-                keyExtractor={(item) => item.id || Math.random().toString()}
+                keyExtractor={(item) => String(item?.id ?? Math.random())}
                 renderItem={({ item: t }) => {
                     const buyer = t.buyer || t.user || {};
                     const raffleDigits = raffles.find(r => r.id === t.raffleId)?.digits;
@@ -2384,7 +2395,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? '0', raffleDigits)}</Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: statusColor }}>
-                            <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time'} size={14} color={statusColor} />
+                            <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time-outline'} size={14} color={statusColor} />
                             <Text style={{ color: statusColor, fontWeight: '700', marginLeft: 6 }}>{t.status}</Text>
                           </View>
                         </View>

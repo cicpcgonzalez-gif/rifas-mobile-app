@@ -169,14 +169,16 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
   const submitReport = async () => {
     if (!reportComment.trim()) return Alert.alert('Detalles requeridos', 'Por favor describe brevemente el motivo del reporte.');
+    if (!current?.user?.id) return Alert.alert('Error', 'No se pudo identificar el usuario a reportar.');
     
     setReporting(true);
     const { res, data } = await api('/reports', {
       method: 'POST',
       body: JSON.stringify({
         raffleId: current.id,
-        category: reportReason,
-        comment: reportComment
+        reportedUserId: current.user.id,
+        reason: String(reportReason || '').trim() || 'Otro',
+        details: reportComment
       })
     });
     setReporting(false);
@@ -186,7 +188,11 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
       setReportComment('');
       Alert.alert('Reporte enviado', 'Gracias por ayudarnos a mantener la comunidad segura. Revisaremos este caso.');
     } else {
-      Alert.alert('Error', data.error || 'No se pudo enviar el reporte.');
+      if (res?.status === 404) {
+        Alert.alert('Error', 'El servidor aún no tiene habilitada la ruta de denuncias. (Error 404)');
+      } else {
+        Alert.alert('Error', data?.error || data?.message || 'No se pudo enviar el reporte.');
+      }
     }
   };
 

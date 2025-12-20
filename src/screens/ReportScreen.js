@@ -52,6 +52,10 @@ export default function ReportScreen({ navigation, route, api }) {
       Alert.alert('Error', 'No se pudo identificar la rifa a reportar.');
       return;
     }
+    if (!reportedUserId) {
+      Alert.alert('Error', 'No se pudo identificar el usuario a reportar.');
+      return;
+    }
     if (!reason) {
       Alert.alert('Falta información', 'Selecciona un motivo.');
       return;
@@ -60,13 +64,13 @@ export default function ReportScreen({ navigation, route, api }) {
     setSubmitting(true);
     try {
       const reasonLabel = REASONS.find((r) => r.id === reason)?.label || reason;
-      const comment = String(details || '').trim() || String(reasonLabel).trim();
-      const category = CATEGORY_BY_REASON[reason] || String(reason || '').trim() || 'other';
+      const normalizedDetails = String(details || '').trim();
 
       const payload = {
         raffleId,
-        category,
-        comment
+        reportedUserId,
+        reason: String(reasonLabel).trim(),
+        details: normalizedDetails || undefined
       };
 
       const { res, data } = await api('/reports', { method: 'POST', body: JSON.stringify(payload) });
@@ -76,7 +80,11 @@ export default function ReportScreen({ navigation, route, api }) {
         ]);
       } else {
         console.log('Report submit failed:', { status: res?.status, data });
-        Alert.alert('Error', data?.error || data?.message || (res?.status ? `Error ${res.status}` : 'No se pudo enviar la denuncia.'));
+        if (res?.status === 404) {
+          Alert.alert('Error', 'El servidor aún no tiene habilitada la ruta de denuncias. (Error 404)');
+        } else {
+          Alert.alert('Error', data?.error || data?.message || (res?.status ? `Error ${res.status}` : 'No se pudo enviar la denuncia.'));
+        }
       }
     } catch (e) {
       Alert.alert('Error', e?.message || 'No se pudo enviar la denuncia.');

@@ -116,8 +116,11 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
       const kycVerified = !!user?.identityVerified;
       setKycStatus(kycVerified ? 'verified' : 'pending');
 
-      if (r2.ok && Array.isArray(d2)) setTickets(d2);
-      else setTickets([]);
+      if (r2.ok && Array.isArray(d2)) {
+        setTickets(d2.filter((t) => t && typeof t === 'object'));
+      } else {
+        setTickets([]);
+      }
 
       if (isRifero) {
         setMyPublicationsLoading(true);
