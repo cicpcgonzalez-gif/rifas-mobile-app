@@ -152,6 +152,7 @@ export default function AuthScreen({ onAuth }) {
       }
 
       const token = data.token || data.accessToken;
+      const refreshToken = data.refreshToken || token;
       const fallbackName = String(form.email || '').split('@')[0] || 'Usuario';
       const user = data.user || {
         email: form.email,
@@ -159,7 +160,7 @@ export default function AuthScreen({ onAuth }) {
         role: 'user'
       };
       
-      await onAuth(token, token, user, rememberMe);
+      await onAuth(token, refreshToken, user, rememberMe);
       
     } catch (err) {
       setError(err.message);
