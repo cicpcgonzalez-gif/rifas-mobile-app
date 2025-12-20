@@ -11,6 +11,7 @@ import {
   ImageBackground,
   ActivityIndicator,
   Alert,
+  Linking,
   ToastAndroid,
   StyleSheet,
   Switch,
@@ -22,11 +23,13 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import { palette } from '../theme';
 import { FilledButton, OutlineButton } from '../components/UI';
+import { ENV } from '../config/env';
 
 const formatTicketNumber = (value, digits = 4) => String(value ?? '').padStart(digits, '0');
 
@@ -44,6 +47,30 @@ const normalizePaymentMethods = (value) => {
   if (Array.isArray(value)) return value.map((v) => String(v || '').trim()).filter(Boolean);
   if (typeof value === 'string') return splitCsv(value);
   return [];
+};
+
+const normalizeRemoteUri = (uri) => {
+  const raw = typeof uri === 'string' ? uri.trim() : String(uri || '').trim();
+  if (!raw) return '';
+
+  if (/^(https?:|file:|content:|data:)/i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `https:${raw}`;
+
+  const base = String(ENV?.apiUrl || '').replace(/\/+$/, '');
+  if (!base) return raw;
+  if (raw.startsWith('/')) return `${base}${raw}`;
+  return `${base}/${raw}`;
+};
+
+const formatTxTypeLabel = (rawType) => {
+  const t = String(rawType || '').trim().toLowerCase();
+  if (!t) return 'Movimiento';
+  if (t === 'manual_payment') return 'Pago manual';
+  if (t === 'deposit') return 'Depósito';
+  if (t === 'withdrawal') return 'Retiro';
+  if (t === 'purchase') return 'Compra';
+  if (t === 'refund') return 'Reembolso';
+  return t.replace(/_/g, ' ');
 };
 
 const isSuperadminRole = (role) => {
@@ -537,6 +564,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [actingId, setActingId] = useState(null);
   const [paymentFilters, setPaymentFilters] = useState({ raffleId: '', status: 'pending', reference: '' });
   const [proofViewer, setProofViewer] = useState({ visible: false, uri: '' });
+  const [proofImageLoading, setProofImageLoading] = useState(false);
+  const [proofImageError, setProofImageError] = useState(false);
 
   const [adminTransactions, setAdminTransactions] = useState([]);
   const [adminTxLoading, setAdminTxLoading] = useState(false);
@@ -554,7 +583,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [verifierResult, setVerifierResult] = useState(null);
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '', q: '' });
+  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', number: '', serial: '' });
   const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
   const [quickVerifierForm, setQuickVerifierForm] = useState({ cedula: '', firstName: '', lastName: '', phone: '', email: '' });
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
@@ -918,11 +947,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (ticketFilters.status) params.append('status', ticketFilters.status);
     if (ticketFilters.from) params.append('from', ticketFilters.from);
     if (ticketFilters.to) params.append('to', ticketFilters.to);
-    if (ticketFilters.reference) params.append('reference', ticketFilters.reference);
-    if (ticketFilters.phone) params.append('phone', ticketFilters.phone);
-    if (ticketFilters.cedula) params.append('cedula', ticketFilters.cedula);
-    if (ticketFilters.email) params.append('email', ticketFilters.email);
-    if (ticketFilters.q) params.append('q', ticketFilters.q);
+    if (String(ticketFilters.number || '').trim()) params.append('number', String(ticketFilters.number).trim());
+    if (String(ticketFilters.serial || '').trim()) params.append('serial', String(ticketFilters.serial).trim());
     params.append('take', '200');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`);
@@ -1377,6 +1403,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   };
 
   const processPayment = async (id, action, reason = null) => {
+    const current = payments.find((p) => p?.id === id);
+    const currentStatus = String(current?.status || 'pending').toLowerCase();
+    if (current && currentStatus !== 'pending') {
+      Alert.alert('Sin acciones', `Este pago ya está ${currentStatus}.`);
+      return;
+    }
     setActingId(id);
     const endpoint = action === 'approve' ? `/admin/manual-payments/${id}/approve` : `/admin/manual-payments/${id}/reject`;
     const { res, data } = await api(endpoint, { method: 'POST', body: JSON.stringify({ reason }) });
@@ -1389,6 +1421,10 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     }
     setActingId(null);
   };
+
+  useEffect(() => {
+    if (activeSection === 'payments') loadManualPayments();
+  }, [activeSection, paymentFilters.status, loadManualPayments]);
 
   const updateStyle = async () => {
     if (!styleForm.raffleId) return Alert.alert('Falta rifa', 'Selecciona una rifa.');
@@ -1414,10 +1450,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (ticketFilters.status) params.append('status', ticketFilters.status);
     if (ticketFilters.from) params.append('from', ticketFilters.from);
     if (ticketFilters.to) params.append('to', ticketFilters.to);
-    if (ticketFilters.reference) params.append('reference', ticketFilters.reference);
-    if (ticketFilters.phone) params.append('phone', ticketFilters.phone);
-    if (ticketFilters.cedula) params.append('cedula', ticketFilters.cedula);
-    if (ticketFilters.email) params.append('email', ticketFilters.email);
+    if (String(ticketFilters.number || '').trim()) params.append('number', String(ticketFilters.number).trim());
+    if (String(ticketFilters.serial || '').trim()) params.append('serial', String(ticketFilters.serial).trim());
     params.append('format', 'csv');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`, { method: 'GET', headers: { Accept: 'text/csv' } }, false);
@@ -1518,7 +1552,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setStyleForm((s) => ({ ...s, gallery: ensureArray(s.gallery).filter((_, i) => i !== index) }));
   };
 
-  const closeProofViewer = () => setProofViewer({ visible: false, uri: '' });
+  const closeProofViewer = () => {
+    setProofViewer({ visible: false, uri: '' });
+    setProofImageLoading(false);
+    setProofImageError(false);
+  };
 
   const editRaffle = (raffle) => {
     // Al editar una rifa existente, no tenemos los assets originales locales.
@@ -2571,15 +2609,18 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           </TouchableOpacity>
                         ) : null}
 
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={ticketFilters.reference} onChangeText={(v) => setTicketFilters(s => ({ ...s, reference: v }))} />
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Teléfono" value={ticketFilters.phone} onChangeText={(v) => setTicketFilters(s => ({ ...s, phone: v }))} keyboardType="phone-pad" />
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Cédula" value={ticketFilters.cedula} onChangeText={(v) => setTicketFilters(s => ({ ...s, cedula: v }))} keyboardType="numeric" />
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Email" value={ticketFilters.email} onChangeText={(v) => setTicketFilters(s => ({ ...s, email: v }))} autoCapitalize="none" />
                         <TextInput
-                          style={[styles.input, { flexGrow: 1, flexBasis: '100%', marginBottom: 0 }]}
-                          placeholder="Buscar (serial/#/nombre/cédula/email)"
-                          value={ticketFilters.q}
-                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, q: v }))}
+                          style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]}
+                          placeholder="Ticket #"
+                          value={ticketFilters.number}
+                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, number: v }))}
+                          keyboardType="numeric"
+                        />
+                        <TextInput
+                          style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]}
+                          placeholder="Serial"
+                          value={ticketFilters.serial}
+                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, serial: v }))}
                           autoCapitalize="none"
                         />
                     </View>
@@ -2659,7 +2700,17 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                        onPress={() => { setTicketFilters({ raffleId: '', status: '', from: '', to: '', reference: '', phone: '', cedula: '', email: '', q: '' }); setTimeout(loadTickets, 10); }}
+                        onPress={() => {
+                          setTicketFilters((s) => ({
+                            raffleId: isSuperadmin ? '' : String(s?.raffleId || ''),
+                            status: '',
+                            from: '',
+                            to: '',
+                            number: '',
+                            serial: ''
+                          }));
+                          setTimeout(loadTickets, 10);
+                        }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
                         >
                         <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
@@ -2692,14 +2743,16 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 keyExtractor={(item) => item.id || Math.random().toString()}
                 renderItem={({ item: p }) => {
                   const buyer = p.user || {};
-                  const statusColor = p.status === 'approved' ? '#4ade80' : p.status === 'rejected' ? '#f87171' : '#fbbf24';
+                  const status = String(p.status || 'pending').toLowerCase();
+                  const statusColor = status === 'approved' ? '#4ade80' : status === 'rejected' ? '#f87171' : '#fbbf24';
+                  const canAct = status === 'pending';
                   return (
                     <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                         <Text style={{ color: '#fff', fontWeight: 'bold' }}>Ref: {p.reference || '—'}</Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
-                          <Ionicons name={p.status === 'approved' ? 'checkmark-circle' : p.status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
-                          <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '700' }}>{p.status}</Text>
+                          <Ionicons name={status === 'approved' ? 'checkmark-circle' : status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
+                          <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '700' }}>{status}</Text>
                         </View>
                       </View>
                       <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifa ID: {p.raffleId} • Monto: Bs. {Number(p.amount || 0).toFixed(2)}</Text>
@@ -2711,32 +2764,40 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.state || '—'}</Text>
                       </View>
                       {p.proof ? (
-                        <TouchableOpacity onPress={() => setProofViewer({ visible: true, uri: p.proof })}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setProofImageLoading(true);
+                            setProofImageError(false);
+                            setProofViewer({ visible: true, uri: normalizeRemoteUri(p.proof) });
+                          }}
+                        >
                           <Text style={{ color: palette.primary, textDecorationLine: 'underline', marginVertical: 4 }}>Ver Comprobante</Text>
                         </TouchableOpacity>
                       ) : null}
-                      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                        <TouchableOpacity 
-                          onPress={() => processPayment(p.id, 'approve')}
-                          disabled={actingId === p.id}
-                          style={{ flex: 1, backgroundColor: '#4ade80', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
-                        >
-                          <Text style={{ color: '#064e3b', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Aprobar'}</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity 
-                          onPress={() => processPayment(p.id, 'reject')}
-                          disabled={actingId === p.id}
-                          style={{ flex: 1, backgroundColor: '#f87171', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
-                        >
-                          <Text style={{ color: '#7f1d1d', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Rechazar'}</Text>
-                        </TouchableOpacity>
-                      </View>
+                      {canAct ? (
+                        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+                          <TouchableOpacity
+                            onPress={() => processPayment(p.id, 'approve')}
+                            disabled={actingId === p.id}
+                            style={{ flex: 1, backgroundColor: '#4ade80', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
+                          >
+                            <Text style={{ color: '#064e3b', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Aprobar'}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => processPayment(p.id, 'reject')}
+                            disabled={actingId === p.id}
+                            style={{ flex: 1, backgroundColor: '#f87171', padding: 10, borderRadius: 10, alignItems: 'center', opacity: actingId === p.id ? 0.7 : 1 }}
+                          >
+                            <Text style={{ color: '#7f1d1d', fontWeight: 'bold' }}>{actingId === p.id ? 'Procesando...' : 'Rechazar'}</Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
                     </View>
                   );
                 }}
                 ListHeaderComponent={
                   <>
-                    <Text style={styles.muted}>Pagos reportados por usuarios pendientes de aprobación.</Text>
+                    <Text style={styles.muted}>Pagos reportados por usuarios.</Text>
 
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
                         <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
@@ -2788,7 +2849,17 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                     </View>
                     
                     {loadingPayments && <ActivityIndicator color={palette.primary} />}
-                    {!loadingPayments && payments.length === 0 && <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>No hay pagos pendientes.</Text>}
+                    {!loadingPayments && payments.length === 0 && (
+                      <Text style={{ color: '#94a3b8', textAlign: 'center', marginVertical: 20 }}>
+                        {paymentFilters.status === 'approved'
+                          ? 'No hay pagos aprobados.'
+                          : paymentFilters.status === 'rejected'
+                            ? 'No hay pagos rechazados.'
+                            : paymentFilters.status === 'pending'
+                              ? 'No hay pagos pendientes.'
+                              : 'No hay pagos.'}
+                      </Text>
+                    )}
                   </>
                 }
               />
@@ -2854,14 +2925,17 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               ) : (
                 <FlatList
                   data={adminTransactions}
-                  keyExtractor={(item) => String(item.id || Math.random())}
+                  keyExtractor={(item) => String(item?.txCode || item?.id || Math.random())}
                   renderItem={({ item: tx }) => {
                     const status = String(tx?.status || 'pending').toLowerCase();
                     const statusColor = status === 'approved' ? '#4ade80' : status === 'rejected' ? '#f87171' : '#fbbf24';
+                    const txLabel = formatTxTypeLabel(tx?.type);
+                    const txCode = String(tx?.txCode || '').trim();
+                    const txCodeDisplay = txCode || (tx?.id ? `#${tx.id}` : '—');
                     return (
                       <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>{tx?.type || 'movimiento'}</Text>
+                          <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>{txLabel}</Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
                             <Ionicons name={status === 'approved' ? 'checkmark-circle' : status === 'rejected' ? 'close-circle' : 'time'} size={16} color={statusColor} />
                             <Text style={{ color: statusColor, marginLeft: 6, fontWeight: '800' }}>{status}</Text>
@@ -2872,6 +2946,26 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           {tx?.createdAt ? new Date(tx.createdAt).toLocaleString() : '—'}
                           {tx?.raffleId ? ` • Rifa ID: ${tx.raffleId}` : ''}
                         </Text>
+
+                        <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                          <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={1}>
+                            Transacción: <Text style={{ color: '#fff', fontWeight: '900' }}>{txCodeDisplay}</Text>
+                          </Text>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              try {
+                                await Clipboard.setStringAsync(txCodeDisplay);
+                                if (Platform.OS === 'android') ToastAndroid.show('Transacción copiada', ToastAndroid.SHORT);
+                              } catch (_e) {
+                                // ignore
+                              }
+                            }}
+                            style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
+                            activeOpacity={0.85}
+                          >
+                            <Ionicons name="copy-outline" size={16} color="#e2e8f0" />
+                          </TouchableOpacity>
+                        </View>
 
                         <View style={{ marginTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                           <View style={{ flex: 1 }}>
@@ -3730,7 +3824,38 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 <Ionicons name="close" size={28} color="#fff" />
               </TouchableOpacity>
               {proofViewer.uri ? (
-                <Image source={{ uri: proofViewer.uri }} style={{ width: '90%', height: '70%', borderRadius: 12 }} resizeMode="contain" />
+                <>
+                  {proofImageLoading ? <ActivityIndicator color="#fff" style={{ marginBottom: 12 }} /> : null}
+                  <Image
+                    source={{ uri: proofViewer.uri }}
+                    style={{ width: '90%', height: '70%', borderRadius: 12, opacity: proofImageLoading ? 0.6 : 1 }}
+                    resizeMode="contain"
+                    onLoadEnd={() => setProofImageLoading(false)}
+                    onError={() => {
+                      setProofImageLoading(false);
+                      setProofImageError(true);
+                    }}
+                  />
+
+                  {proofImageError ? (
+                    <Text style={{ color: '#fff', marginTop: 10, textAlign: 'center' }}>
+                      No se pudo cargar el comprobante.
+                    </Text>
+                  ) : null}
+
+                  <TouchableOpacity
+                    onPress={async () => {
+                      try {
+                        await Linking.openURL(proofViewer.uri);
+                      } catch (_e) {
+                        Alert.alert('Error', 'No se pudo abrir el comprobante.');
+                      }
+                    }}
+                    style={{ marginTop: 12, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.10)' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Abrir en navegador</Text>
+                  </TouchableOpacity>
+                </>
               ) : (
                 <Text style={{ color: '#fff' }}>Sin comprobante</Text>
               )}

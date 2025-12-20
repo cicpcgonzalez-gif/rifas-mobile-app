@@ -576,7 +576,20 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                       ) : (
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={{ width: 150, height: 10, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.22)', overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                            <View
+                              style={{
+                                width: 150,
+                                height: 14,
+                                borderRadius: 999,
+                                backgroundColor: 'rgba(239, 68, 68, 0.22)',
+                                overflow: 'hidden',
+                                borderWidth: 1,
+                                borderColor: 'rgba(255,255,255,0.08)',
+                                position: 'relative',
+                                justifyContent: 'center',
+                                alignItems: 'center'
+                              }}
+                            >
                               <View
                                 style={{
                                   height: '100%',
@@ -585,10 +598,17 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                                   borderRadius: 999
                                 }}
                               />
+                              <Text
+                                style={{
+                                  position: 'absolute',
+                                  color: '#fff',
+                                  fontSize: 11,
+                                  fontWeight: '900'
+                                }}
+                              >
+                                {`${Math.round(percentLeft)}%`}
+                              </Text>
                             </View>
-                            <Text style={{ color: '#e2e8f0', fontSize: 12, fontWeight: '800', marginLeft: 10, minWidth: 44, textAlign: 'right' }}>
-                              {`${Math.round(percentLeft)}%`}
-                            </Text>
                           </View>
                         </View>
                       )}

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
 import { useToast } from '../components/UI';
 import { palette } from '../theme';
@@ -24,6 +25,7 @@ export default function WalletScreen({ api }) {
   const [balance, setBalance] = useState(0);
   const [movements, setMovements] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [receiverDetails, setReceiverDetails] = useState(null);
   const [topupAmount, setTopupAmount] = useState('');
   const [showTopup, setShowTopup] = useState(false);
   const [topupProvider, setTopupProvider] = useState('mobile_payment');
@@ -34,6 +36,17 @@ export default function WalletScreen({ api }) {
     Alert.alert(type === 'error' ? 'Error' : 'Info', msg);
   };
 
+  const copyValue = useCallback(async (value, label = 'Dato') => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return;
+    try {
+      await Clipboard.setStringAsync(raw);
+      showToast(`${label} copiado`, 'success');
+    } catch (_e) {
+      showToast('No se pudo copiar', 'error');
+    }
+  }, [showToast]);
+
   const loadWallet = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -41,6 +54,19 @@ export default function WalletScreen({ api }) {
       if (res.ok && data) {
         setBalance(data?.balance || 0);
         setMovements(data?.transactions || []);
+      }
+
+      // Datos destino para recargar (cuentas del admin/sistema)
+      try {
+        const { res: bRes, data: bData } = await api('/admin/bank-details');
+        if (bRes.ok) {
+          const normalized = (bData && typeof bData === 'object' && bData.bankDetails != null)
+            ? bData.bankDetails
+            : bData;
+          setReceiverDetails(normalized && typeof normalized === 'object' ? normalized : null);
+        }
+      } catch (_e) {
+        // Silenciar
       }
       
       const { res: pRes, data: pData } = await api('/me/payments');
@@ -53,6 +79,50 @@ export default function WalletScreen({ api }) {
       setRefreshing(false);
     }
   }, [api]);
+
+  const getProviderDetailsRows = useCallback((providerId) => {
+    const d = receiverDetails && typeof receiverDetails === 'object' ? receiverDetails : {};
+
+    const bank = d.bankName || d.bank || '';
+    const phone = d.phone || '';
+    const cedula = d.cedula || '';
+    const accountNumber = d.accountNumber || d.account || '';
+    const accountType = d.accountType || d.type || '';
+    const accountName = d.accountName || d.holder || d.name || '';
+
+    const zelleEmail = d.zelleEmail || d.zelle || d.emailZelle || d.email || '';
+    const binanceId = d.binanceId || d.binancePayId || d.binancePay || d.binance || d.usdtAddress || d.wallet || '';
+
+    if (providerId === 'mobile_payment') {
+      const rows = [
+        bank ? { label: 'Banco', value: bank } : null,
+        phone ? { label: 'Teléfono', value: phone } : null,
+        cedula ? { label: 'Cédula', value: cedula } : null
+      ].filter(Boolean);
+      return rows.length ? rows : [{ label: 'Datos', value: 'No configurados' }];
+    }
+
+    if (providerId === 'transfer') {
+      const rows = [
+        bank ? { label: 'Banco', value: bank } : null,
+        accountType ? { label: 'Tipo', value: accountType } : null,
+        accountNumber ? { label: 'Cuenta', value: accountNumber } : null,
+        accountName ? { label: 'Titular', value: accountName } : null,
+        cedula ? { label: 'Cédula', value: cedula } : null
+      ].filter(Boolean);
+      return rows.length ? rows : [{ label: 'Datos', value: 'No configurados' }];
+    }
+
+    if (providerId === 'zelle') {
+      return zelleEmail ? [{ label: 'Email', value: zelleEmail }] : [{ label: 'Datos', value: 'No configurados' }];
+    }
+
+    if (providerId === 'binance') {
+      return binanceId ? [{ label: 'ID/Wallet', value: binanceId }] : [{ label: 'Datos', value: 'No configurados' }];
+    }
+
+    return [];
+  }, [receiverDetails]);
 
   const handleTopup = async () => {
     const amount = Number(topupAmount);
@@ -194,6 +264,7 @@ export default function WalletScreen({ api }) {
                 { id: 'binance', label: 'Binance', icon: 'logo-bitcoin', hint: 'Cripto / Binance' }
               ].map((opt) => {
                 const active = topupProvider === opt.id;
+                const detailRows = getProviderDetailsRows(opt.id);
                 return (
                   <TouchableOpacity
                     key={opt.id}
@@ -229,6 +300,26 @@ export default function WalletScreen({ api }) {
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: '900' }}>{opt.label}</Text>
                       <Text style={{ color: palette.muted, fontSize: 12 }}>{opt.hint}</Text>
+                      {detailRows.map((row) => {
+                        const key = `${opt.id}-${row.label}-${row.value}`;
+                        const canCopy = row.value && row.value !== 'No configurados';
+                        return (
+                          <View key={key} style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                            <Text style={{ color: '#cbd5e1', fontSize: 12, flex: 1 }} numberOfLines={2}>
+                              {row.label}: <Text style={{ color: '#fff', fontWeight: '800' }}>{row.value}</Text>
+                            </Text>
+                            {canCopy ? (
+                              <TouchableOpacity
+                                onPress={() => copyValue(row.value, row.label)}
+                                activeOpacity={0.85}
+                                style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
+                              >
+                                <Ionicons name="copy-outline" size={16} color="#e2e8f0" />
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        );
+                      })}
                     </View>
                     <Ionicons name={active ? 'checkmark-circle' : 'ellipse-outline'} size={18} color={active ? '#4ade80' : '#94a3b8'} />
                   </TouchableOpacity>
