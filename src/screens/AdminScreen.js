@@ -30,6 +30,7 @@ import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/nativ
 import { palette } from '../theme';
 import { FilledButton, OutlineButton } from '../components/UI';
 import { ENV } from '../config/env';
+import { formatMoneyVES } from '../utils';
 
 const formatTicketNumber = (value, digits = 4) => String(value ?? '').padStart(digits, '0');
 
@@ -138,6 +139,28 @@ const formatInstantWinsForInput = (instantWins) => {
 const ProgressBar = ({ progress, color }) => (
   <View style={{ height: 6, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 3, marginVertical: 8, overflow: 'hidden' }}>
     <View style={{ width: `${Math.min(Math.max(progress, 0), 100)}%`, height: '100%', backgroundColor: color, borderRadius: 3 }} />
+  </View>
+);
+
+const CollapsibleCard = ({ title, rightText, expanded, onToggle, children }) => (
+  <View style={{ marginTop: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+    <TouchableOpacity
+      onPress={onToggle}
+      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 12 }}
+      activeOpacity={0.85}
+    >
+      <View style={{ flex: 1, paddingRight: 10 }}>
+        <Text style={{ color: '#fff', fontWeight: '800' }}>{title}</Text>
+        {!!rightText && <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }}>{rightText}</Text>}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+          <Text style={{ color: '#fff', fontWeight: '800' }}>{expanded ? 'Ocultar' : 'Ver'}</Text>
+        </View>
+        <Ionicons name={expanded ? 'chevron-up-outline' : 'chevron-down-outline'} size={18} color={'#94a3b8'} />
+      </View>
+    </TouchableOpacity>
+    {expanded ? <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>{children}</View> : null}
   </View>
 );
 
@@ -509,6 +532,15 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [metricsTop, setMetricsTop] = useState([]);
   const [metricsLoading, setMetricsLoading] = useState(false);
 
+  const [dashboardPanels, setDashboardPanels] = useState({
+    summary: false,
+    raffle: false,
+    hourly: false,
+    daily: false,
+    byState: false,
+    top: false
+  });
+
   const [userSearch, setUserSearch] = useState('');
   const [filteredUsers, setFilteredUsers] = useState([]);
   const [editingUser, setEditingUser] = useState(null); // For modal actions
@@ -638,7 +670,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   useEffect(() => {
     if (activeSection === 'dashboard') loadMetrics();
-  }, [activeSection]);
+  }, [activeSection, selectedRaffle?.id]);
 
   const deleteAccount = useCallback(() => {
     Alert.alert(
@@ -2005,12 +2037,15 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const loadMetrics = async () => {
     setMetricsLoading(true);
     try {
+      const raffleId = selectedRaffle?.id ? String(selectedRaffle.id) : '';
+      const q = raffleId ? `?raffleId=${encodeURIComponent(raffleId)}` : '';
+      const q7 = raffleId ? `?days=7&raffleId=${encodeURIComponent(raffleId)}` : '?days=7';
       const [summary, hourly, daily, byState, top] = await Promise.all([
-        api('/admin/metrics/summary'),
-        api('/admin/metrics/hourly'),
-        api('/admin/metrics/daily?days=7'),
-        api('/admin/metrics/by-state'),
-        api('/admin/metrics/top-buyers')
+        api(`/admin/metrics/summary${q}`),
+        api(`/admin/metrics/hourly${q}`),
+        api(`/admin/metrics/daily${q7}`),
+        api(`/admin/metrics/by-state${q}`),
+        api(`/admin/metrics/top-buyers${q}`)
       ]);
 
       if (summary.res.ok) setMetricsSummary(summary.data); else setMetricsSummary(null);
@@ -2020,6 +2055,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       if (top.res.ok) setMetricsTop(top.data || []); else setMetricsTop([]);
     } catch (err) {
       console.log('metrics error', err);
+      setMetricsSummary(null);
+      setMetricsHourly([]);
+      setMetricsDaily([]);
+      setMetricsByState([]);
+      setMetricsTop([]);
     }
     setMetricsLoading(false);
   };
@@ -2594,7 +2634,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                         {isSuperadmin ? (
                           <TouchableOpacity
-                            onPress={() => setTicketFilters((s) => ({ ...s, raffleId: '' }))}
+                            onPress={loadTickets}
                             style={[
                               styles.input,
                               {
@@ -2606,8 +2646,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                               }
                             ]}
                           >
-                            <Text style={{ color: '#fff', fontWeight: '800' }}>Limpiar rifa</Text>
-                            <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Ver todas</Text>
+                            <Text style={{ color: '#fff', fontWeight: '800' }}>Verificar</Text>
                           </TouchableOpacity>
                         ) : null}
 
@@ -2699,7 +2738,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                     <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
                         <TouchableOpacity onPress={loadTickets} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>Verificar</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                         onPress={() => {
@@ -3685,36 +3724,56 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   <Ionicons name="chevron-down-outline" size={20} color="#94a3b8" style={{ position: 'absolute', right: 12 }} />
               </TouchableOpacity>
 
+                <TouchableOpacity
+                  onPress={loadMetrics}
+                  style={{ marginTop: 10, paddingVertical: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
+                  activeOpacity={0.85}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>{metricsLoading ? 'Actualizando...' : 'Actualizar métricas'}</Text>
+                </TouchableOpacity>
+
               {metricsLoading ? (
                 <ActivityIndicator color={palette.primary} style={{ marginVertical: 20 }} />
               ) : (
                 <>
-                  {metricsSummary ? (
-                    <View style={{ flexWrap: 'wrap', flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                      {[{ label: 'Participantes', value: metricsSummary.participants },
-                        { label: 'Tickets vendidos', value: metricsSummary.ticketsSold },
-                        { label: 'Pendientes', value: metricsSummary.pendingPayments },
-                        { label: 'Recaudado', value: `Bs. ${(metricsSummary.totalRevenue || 0).toFixed(2)}` },
-                        { label: 'Ventas hoy', value: metricsSummary.todaySales },
-                        { label: 'Recaudado hoy', value: `Bs. ${(metricsSummary.todayRevenue || 0).toFixed(2)}` }].map(card => (
-                          <View key={card.label} style={{ flexBasis: '48%', backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
-                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>{card.label}</Text>
-                            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{card.value}</Text>
-                          </View>
-                        ))}
-                    </View>
-                  ) : (
-                    <Text style={{ color: palette.muted, marginTop: 10 }}>Sin datos de métricas.</Text>
-                  )}
+                  <CollapsibleCard
+                    title="Resumen"
+                    rightText={selectedRaffle?.title ? `Rifa: ${selectedRaffle.title}` : 'Rifa: todas / sin seleccionar'}
+                    expanded={dashboardPanels.summary}
+                    onToggle={() => setDashboardPanels((s) => ({ ...s, summary: !s.summary }))}
+                  >
+                    {metricsSummary ? (
+                      <View style={{ flexWrap: 'wrap', flexDirection: 'row', gap: 10, marginTop: 6 }}>
+                        {[{ label: 'Participantes', value: metricsSummary.participants ?? 0 },
+                          { label: 'Tickets vendidos', value: metricsSummary.ticketsSold ?? 0 },
+                          { label: 'Pendientes', value: metricsSummary.pendingPayments ?? 0 },
+                          { label: 'Recaudado', value: `Bs. ${(metricsSummary.totalRevenue || 0).toFixed(2)}` },
+                          { label: 'Ventas hoy', value: metricsSummary.todaySales ?? 0 },
+                          { label: 'Recaudado hoy', value: `Bs. ${(metricsSummary.todayRevenue || 0).toFixed(2)}` }].map(card => (
+                            <View key={card.label} style={{ flexBasis: '48%', backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' }}>
+                              <Text style={{ color: '#94a3b8', fontSize: 12 }}>{card.label}</Text>
+                              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 18, marginTop: 4 }}>{card.value}</Text>
+                            </View>
+                          ))}
+                      </View>
+                    ) : (
+                      <Text style={{ color: palette.muted }}>Sin datos de métricas.</Text>
+                    )}
+                  </CollapsibleCard>
 
                   {(() => {
                     const r = selectedRaffle || raffles[0];
                     const sold = r?.soldTickets || 0;
                     const total = r?.totalTickets || 100;
                     const percent = total > 0 ? (sold / total) * 100 : 0;
+                    const label = r?.title || 'Sin rifa seleccionada';
                     return (
-                      <View style={{ marginTop: 16, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
-                        <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>{r?.title || 'Sin rifa seleccionada'}</Text>
+                      <CollapsibleCard
+                        title="Estado de la rifa"
+                        rightText={label}
+                        expanded={dashboardPanels.raffle}
+                        onToggle={() => setDashboardPanels((s) => ({ ...s, raffle: !s.raffle }))}
+                      >
                         <Text style={{ color: palette.muted, fontSize: 12 }}>Ticket: Bs. {r?.price || r?.ticketPrice || 0} • Cierre: {r?.endDate ? r.endDate.split('T')[0] : '—'}</Text>
                         {r?.style?.bannerImage ? (
                           <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 10, marginTop: 10 }} resizeMode="cover" />
@@ -3724,21 +3783,25 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>{percent.toFixed(1)}%</Text>
                         </View>
                         <ProgressBar progress={percent} color={percent > 75 ? '#4ade80' : percent > 40 ? '#fbbf24' : '#f87171'} />
-                      </View>
+                      </CollapsibleCard>
                     );
                   })()}
 
-                  {/* Ventas por hora */}
-                  <View style={{ marginTop: 16 }}>
-                    <Text style={styles.section}>Ventas por hora (hoy)</Text>
+                  <CollapsibleCard
+                    title="Ventas por hora (hoy)"
+                    rightText={metricsHourly.length ? `Registros: ${metricsHourly.length}` : 'Sin datos'}
+                    expanded={dashboardPanels.hourly}
+                    onToggle={() => setDashboardPanels((s) => ({ ...s, hourly: !s.hourly }))}
+                  >
                     {metricsHourly.length === 0 ? (
                       <Text style={{ color: palette.muted }}>Sin ventas registradas hoy.</Text>
                     ) : (
                       <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 8 }}>
                         {(() => {
-                          const max = Math.max(1, ...metricsHourly.map((x) => x.count || 0));
-                          return metricsHourly.filter(h => h).map((h) => {
-                            const height = Math.max(4, ((h.count || 0) / max) * 80);
+                          const rows = metricsHourly.filter(Boolean);
+                          const max = Math.max(1, ...rows.map((x) => x?.count || 0));
+                          return rows.map((h) => {
+                            const height = Math.max(4, ((h?.count || 0) / max) * 80);
                             return (
                               <View key={`h-${h.hour}`} style={{ flex: 1, alignItems: 'center', marginHorizontal: 1 }}>
                                 <View style={{ width: '70%', height, backgroundColor: '#22c55e', borderRadius: 6 }} />
@@ -3749,42 +3812,53 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         })()}
                       </View>
                     )}
-                  </View>
+                  </CollapsibleCard>
 
-                  {/* Ventas por día */}
-                  <View style={{ marginTop: 16 }}>
-                    <Text style={styles.section}>Ventas últimos 7 días</Text>
+                  <CollapsibleCard
+                    title="Ventas últimos 7 días"
+                    rightText={metricsDaily.length ? `Días: ${metricsDaily.length}` : 'Sin datos'}
+                    expanded={dashboardPanels.daily}
+                    onToggle={() => setDashboardPanels((s) => ({ ...s, daily: !s.daily }))}
+                  >
                     {metricsDaily.length === 0 ? (
                       <Text style={{ color: palette.muted }}>Sin datos.</Text>
                     ) : (
                       <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: 8 }}>
                         {(() => {
-                          const max = Math.max(1, ...metricsDaily.map((d) => d.count || 0));
-                          return metricsDaily.filter(d => d).map((d) => {
-                            const h = Math.max(4, ((d.count || 0) / max) * 80);
+                          const rows = metricsDaily.filter(Boolean);
+                          const max = Math.max(1, ...rows.map((d) => d?.count || 0));
+                          return rows.map((d, idx) => {
+                            const h = Math.max(4, ((d?.count || 0) / max) * 80);
+                            const key = d?.date ? String(d.date) : `d-${idx}`;
+                            const label = d?.date ? String(d.date).slice(5) : '—';
                             return (
-                              <View key={d.date} style={{ flex: 1, alignItems: 'center', marginHorizontal: 2 }}>
+                              <View key={key} style={{ flex: 1, alignItems: 'center', marginHorizontal: 2 }}>
                                 <View style={{ width: '70%', height: h, backgroundColor: '#60a5fa', borderRadius: 6 }} />
-                                <Text style={{ color: '#94a3b8', fontSize: 8, marginTop: 4 }}>{d.date.slice(5)}</Text>
+                                <Text style={{ color: '#94a3b8', fontSize: 8, marginTop: 4 }}>{label}</Text>
                               </View>
                             );
                           });
                         })()}
                       </View>
                     )}
-                  </View>
+                  </CollapsibleCard>
 
-                  {/* Ventas por estado */}
-                  <View style={{ marginTop: 16 }}>
-                    <Text style={styles.section}>Ventas por estado</Text>
-                    {metricsByState.length === 0 ? <Text style={{ color: palette.muted }}>Sin datos.</Text> : metricsByState.filter(s => s).slice(0, 8).map((s) => {
-                      const max = Math.max(1, metricsByState[0]?.count || 1);
-                      const width = Math.max(6, (s.count / max) * 100);
+                  <CollapsibleCard
+                    title="Ventas por estado"
+                    rightText={metricsByState.length ? `Estados: ${metricsByState.length}` : 'Sin datos'}
+                    expanded={dashboardPanels.byState}
+                    onToggle={() => setDashboardPanels((s) => ({ ...s, byState: !s.byState }))}
+                  >
+                    {metricsByState.length === 0 ? <Text style={{ color: palette.muted }}>Sin datos.</Text> : metricsByState.filter(Boolean).slice(0, 8).map((s, idx) => {
+                      const max = Math.max(1, ...metricsByState.filter(Boolean).map((row) => row?.count || 0));
+                      const count = Number(s?.count) || 0;
+                      const width = Math.max(6, (count / max) * 100);
+                      const stateLabel = String(s?.state || '—');
                       return (
-                        <View key={s.state} style={{ marginBottom: 8 }}>
+                        <View key={`${stateLabel}-${idx}`} style={{ marginBottom: 8 }}>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                            <Text style={{ color: '#e2e8f0' }}>{s.state}</Text>
-                            <Text style={{ color: '#94a3b8' }}>{s.count}</Text>
+                            <Text style={{ color: '#e2e8f0' }}>{stateLabel}</Text>
+                            <Text style={{ color: '#94a3b8' }}>{count}</Text>
                           </View>
                           <View style={{ height: 8, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden', marginTop: 4 }}>
                             <View style={{ width: `${width}%`, height: '100%', backgroundColor: '#a78bfa' }} />
@@ -3792,21 +3866,24 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         </View>
                       );
                     })}
-                  </View>
+                  </CollapsibleCard>
 
-                  {/* Top compradores */}
-                  <View style={{ marginTop: 16 }}>
-                    <Text style={styles.section}>Top de compra</Text>
+                  <CollapsibleCard
+                    title="Top de compra"
+                    rightText={metricsTop.length ? `Usuarios: ${metricsTop.length}` : 'Sin datos'}
+                    expanded={dashboardPanels.top}
+                    onToggle={() => setDashboardPanels((s) => ({ ...s, top: !s.top }))}
+                  >
                     {metricsTop.length === 0 ? <Text style={{ color: palette.muted }}>Sin datos.</Text> : metricsTop.filter(u => u).map((u, idx) => (
                       <View key={u.userId || idx} style={{ paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)', flexDirection: 'row', justifyContent: 'space-between' }}>
-                        <View>
-                          <Text style={{ color: '#fff', fontWeight: '700' }}>{idx + 1}. {u.name}</Text>
-                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>{u.email || '—'} • {u.state}</Text>
+                        <View style={{ flex: 1, paddingRight: 10 }}>
+                          <Text style={{ color: '#fff', fontWeight: '700' }}>{idx + 1}. {String(u?.name || '—')}</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>{u?.email || '—'} • {String(u?.state || '—')}</Text>
                         </View>
-                        <Text style={{ color: '#fbbf24', fontWeight: '800' }}>{u.tickets}</Text>
+                        <Text style={{ color: '#fbbf24', fontWeight: '800' }}>{Number(u?.tickets) || 0}</Text>
                       </View>
                     ))}
-                  </View>
+                  </CollapsibleCard>
                 </>
               )}
             </View>
