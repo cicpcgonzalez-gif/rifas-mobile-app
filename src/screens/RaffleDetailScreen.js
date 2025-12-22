@@ -441,23 +441,33 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
         </Modal>
 
         {media.length > 0 ? (
-          <View style={{ height: 260, marginBottom: 16 }}>
-            <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
+          <View style={{ marginBottom: 16 }}>
+            {(() => {
+              const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+              const aspect = 1; // ancho/alto (cuadrado)
+              const w = width - 32;
+              const h = clamp(Math.round(w / aspect), 240, 520);
+              return (
+                <View style={{ height: h }}>
+                  <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
               {media.map((img, index) => (
-                <View key={index} style={{ width: width - 32, height: 260, borderRadius: 12, overflow: 'hidden', marginRight: 0, backgroundColor: 'rgba(255,255,255,0.04)' }}>
+                <View key={index} style={{ width: w, height: h, borderRadius: 12, overflow: 'hidden', marginRight: 0, backgroundColor: 'rgba(255,255,255,0.04)' }}>
                   <ImageBackground source={{ uri: img }} style={{ flex: 1 }} blurRadius={12}>
                     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
-                      <Image source={{ uri: img }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+                      <Image source={{ uri: img }} style={{ width: '100%', height: '100%', backgroundColor: '#000' }} resizeMode="contain" />
                     </View>
                   </ImageBackground>
                 </View>
               ))}
-            </ScrollView>
-            <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-              {media.map((_, i) => (
-                <View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.5)' }} />
-              ))}
-            </View>
+                  </ScrollView>
+                  <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
+                    {media.map((_, i) => (
+                      <View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.5)' }} />
+                    ))}
+                  </View>
+                </View>
+              );
+            })()}
           </View>
         ) : null}
         

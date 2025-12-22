@@ -480,8 +480,14 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                     </TouchableOpacity>
                 </View>
 
-                {/* Image */}
-                <View style={{ width: '100%', aspectRatio: 1, backgroundColor: '#000' }}>
+                {/* Image (banner con tamaño estándar) */}
+                {(() => {
+                  const w = Dimensions.get('window').width;
+                  const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+                  const aspect = 1; // ancho/alto (cuadrado)
+                  const h = clamp(Math.round(w / aspect), 260, 520);
+                  return (
+                    <View style={{ width: '100%', height: h, backgroundColor: palette.surface, overflow: 'hidden' }}>
                     {gallery.length > 0 ? (
                         <ScrollView
                             horizontal
@@ -497,7 +503,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                           <Image 
                             key={idx} 
                             source={{ uri: img }} 
-                            style={{ width: Dimensions.get('window').width, height: '100%', backgroundColor: '#000' }} 
+                            style={{ width: w, height: h, backgroundColor: '#000' }} 
                             resizeMode="contain" 
                           />
                             ))}
@@ -529,7 +535,9 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                       </View>
                     )}
                     <PulsingBadge />
-                </View>
+                    </View>
+                  );
+                })()}
 
                 {/* Action Bar */}
                 <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -586,6 +594,44 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                         <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.14)', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.35)' }}>
                           <Text style={{ color: '#fecaca', fontSize: 11, fontWeight: '900' }}>AGOTADA</Text>
                         </View>
+
+                          {(() => {
+                            const raw = item?.instantWins ?? item?.style?.instantWins ?? [];
+                            const digits = Number(item?.digits) || 4;
+                            const toList = (v) => {
+                              if (Array.isArray(v)) return v;
+                              if (typeof v === 'string') {
+                                return v
+                                  .split(',')
+                                  .map((x) => x.trim())
+                                  .filter(Boolean);
+                              }
+                              return [];
+                            };
+                            const list = toList(raw)
+                              .map((x) => {
+                                const n = typeof x === 'number' ? x : Number(String(x).replace(/\D/g, ''));
+                                if (!Number.isFinite(n)) return null;
+                                return Math.max(0, Math.trunc(n));
+                              })
+                              .filter((x) => x !== null);
+
+                            const unique = Array.from(new Set(list)).slice(0, 12);
+                            if (!unique.length) return null;
+
+                            const fmt = (n) => String(n).padStart(digits, '0');
+                            const shown = unique.slice(0, 6).map(fmt).join(', ');
+                            const suffix = unique.length > 6 ? '…' : '';
+
+                            return (
+                              <View style={{ marginTop: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(251, 191, 36, 0.10)', borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.20)' }}>
+                                <Text style={{ color: '#cbd5e1', fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
+                                  <Text style={{ color: '#fbbf24', fontWeight: '900' }}>Bendecidos: </Text>
+                                  {shown}{suffix}
+                                </Text>
+                              </View>
+                            );
+                          })()}
                       ) : (
                         <View style={{ flex: 1, alignItems: 'flex-end' }}>
                           <View style={{ flexDirection: 'row', alignItems: 'center' }}>

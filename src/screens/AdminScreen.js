@@ -6,6 +6,7 @@ import {
   TextInput,
   FlatList,
   ScrollView,
+  Pressable,
   TouchableOpacity,
   Image,
   ImageBackground,
@@ -272,13 +273,34 @@ const normalizeImage = async (
     compress = 0.7,
     maxChars = 600_000,
     minCompress = 0.35,
-    maxIterations = 4
+    maxIterations = 4,
+    aspectRatio = null
   } = {}
 ) => {
   const uri = asset?.uri;
   if (!uri) return null;
 
-  const baseWidth = Number(asset?.width) || maxWidth;
+  const safeAspect = typeof aspectRatio === 'number' && Number.isFinite(aspectRatio) && aspectRatio > 0 ? aspectRatio : null;
+  const srcW = Number(asset?.width) || 0;
+  const srcH = Number(asset?.height) || 0;
+
+  let cropAction = null;
+  if (safeAspect && srcW > 0 && srcH > 0) {
+    const srcAspect = srcW / srcH;
+    if (srcAspect > safeAspect) {
+      // Muy ancha: recortar ancho al centro
+      const nextW = Math.max(1, Math.round(srcH * safeAspect));
+      const originX = Math.max(0, Math.round((srcW - nextW) / 2));
+      cropAction = { crop: { originX, originY: 0, width: nextW, height: srcH } };
+    } else if (srcAspect < safeAspect) {
+      // Muy alta: recortar alto al centro
+      const nextH = Math.max(1, Math.round(srcW / safeAspect));
+      const originY = Math.max(0, Math.round((srcH - nextH) / 2));
+      cropAction = { crop: { originX: 0, originY, width: srcW, height: nextH } };
+    }
+  }
+
+  const baseWidth = (cropAction?.crop?.width ? Number(cropAction.crop.width) : srcW) || maxWidth;
   let currentWidth = Math.min(maxWidth, baseWidth);
   let currentCompress = compress;
   let lastDataUrl = null;
@@ -287,11 +309,15 @@ const normalizeImage = async (
     const width = Math.max(320, Math.round(currentWidth));
     const jpegCompress = Math.max(minCompress, currentCompress);
 
-    const manipResult = await ImageManipulator.manipulateAsync(
-      uri,
-      [{ resize: { width } }],
-      { compress: jpegCompress, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-    );
+    const actions = [];
+    if (cropAction) actions.push(cropAction);
+    actions.push({ resize: { width } });
+
+    const manipResult = await ImageManipulator.manipulateAsync(uri, actions, {
+      compress: jpegCompress,
+      format: ImageManipulator.SaveFormat.JPEG,
+      base64: true
+    });
 
     if (!manipResult?.base64) return null;
     const dataUrl = `data:image/jpeg;base64,${manipResult.base64}`;
@@ -636,7 +662,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
   const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '' });
-  const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
+  const [dashboardRafflePickerVisible, setDashboardRafflePickerVisible] = useState(false);
+  const [ticketRafflePickerVisible, setTicketRafflePickerVisible] = useState(false);
   const [ticketVerifyType, setTicketVerifyType] = useState('serial'); // 'cedula' | 'name' | 'number' | 'serial'
   const [ticketVerifyQuery, setTicketVerifyQuery] = useState('');
 
@@ -661,7 +688,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
   const [publishPreviewVisible, setPublishPreviewVisible] = useState(false);
-  const [showLotteryModal, setShowLotteryModal] = useState(false);
+  const [showLotteryScheduleModal, setShowLotteryScheduleModal] = useState(false);
+  const [showLiveRaffleModal, setShowLiveRaffleModal] = useState(false);
   const [startPickerVisible, setStartPickerVisible] = useState(false);
   const [endPickerVisible, setEndPickerVisible] = useState(false);
   const [startDateValue, setStartDateValue] = useState(new Date());
@@ -712,7 +740,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   }, [activeSection, selectedRaffle?.id]);
 
   useEffect(() => {
-    if (activeSection !== 'payments') return;
+    // Varias secciones (pagos/tickets/métricas) requieren lista de rifas.
+    if (!['payments', 'tickets', 'dashboard'].includes(activeSection)) return;
     if (!api) return;
     if (Array.isArray(raffles) && raffles.length) return;
     loadRaffles();
@@ -746,7 +775,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   }, [api, onLogout]);
 
   useEffect(() => {
-    setShowLotteryModal(false);
+    setShowLotteryScheduleModal(false);
+    setShowLiveRaffleModal(false);
     setStartPickerVisible(false);
     setEndPickerVisible(false);
   }, [activeSection]);
@@ -1057,10 +1087,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const verifiableRafflesForTickets = useMemo(() => {
     const list = Array.isArray(raffles) ? raffles : [];
     return list
-      .filter((r) => {
-        const st = String(r?.status || 'active').toLowerCase();
-        return st === 'active' || st === 'closed';
-      })
+      .filter((r) => String(r?.status || '').toLowerCase() === 'active')
       .sort((a, b) => {
         const ad = a?.activatedAt || a?.createdAt;
         const bd = b?.activatedAt || b?.createdAt;
@@ -1098,7 +1125,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (!isSuperadmin) return;
     setSaActiveRafflesLoading(true);
     try {
-      const { res, data } = await api('/superadmin/admins/active-raffles?includeClosed=1');
+      const { res, data } = await api('/superadmin/admins/active-raffles');
       if (res.ok && Array.isArray(data)) {
         setSaActiveRafflesByAdmin(data.filter(Boolean));
       } else {
@@ -2815,7 +2842,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                             Alert.alert('Selecciona un admin', 'Primero elige el admin y luego la rifa activa.');
                             return;
                           }
-                          setRafflePickerVisible(true);
+                          setTicketRafflePickerVisible(true);
                         }}
                         style={[styles.input, { marginBottom: 12, justifyContent: 'center' }]}
                       >
@@ -2969,8 +2996,17 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       ) : null}
                     </View>
 
-                    <Modal visible={rafflePickerVisible} transparent animationType="fade">
-                      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 16 }}>
+                    <Modal
+                      visible={ticketRafflePickerVisible}
+                      transparent
+                      animationType="fade"
+                      onRequestClose={() => setTicketRafflePickerVisible(false)}
+                    >
+                      <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+                        <Pressable
+                          style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.75)' }]}
+                          onPressIn={() => setTicketRafflePickerVisible(false)}
+                        />
                         <View style={{ backgroundColor: '#0b1224', borderRadius: 16, padding: 14, maxHeight: '80%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
                           <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center' }}>Selecciona una rifa activa</Text>
                           <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>La verificación/lista es por rifa</Text>
@@ -2981,7 +3017,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                                 key={String(r.id)}
                                 onPress={() => {
                                   setTicketFilters((s) => ({ ...s, raffleId: String(r.id) }));
-                                  setRafflePickerVisible(false);
+                                  setTicketRafflePickerVisible(false);
                                 }}
                                 style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', marginBottom: 10 }}
                               >
@@ -3003,7 +3039,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                           <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
                             <TouchableOpacity
-                              onPress={() => setRafflePickerVisible(false)}
+                              onPressIn={() => setTicketRafflePickerVisible(false)}
                               style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
                             >
                               <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
@@ -3506,7 +3542,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               
               <View style={{ marginBottom: 10 }}>
                 <TouchableOpacity 
-                  onPress={() => setShowLotteryModal(true)} 
+                  onPress={() => setShowLotteryScheduleModal(true)} 
                   style={[styles.input, { justifyContent: 'center' }, raffleErrors.lottery && { borderColor: '#ef4444', borderWidth: 1 }]}
                 >
                     <Text style={{ color: raffleForm.lottery ? '#fff' : '#94a3b8' }}>{raffleForm.lottery || 'Seleccionar Lotería'}</Text>
@@ -3515,19 +3551,19 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 {raffleErrors.lottery && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4 }}>* Requerido</Text>}
               </View>
 
-              <Modal visible={showLotteryModal} transparent animationType="fade">
+              <Modal visible={showLotteryScheduleModal} transparent animationType="fade" onRequestClose={() => setShowLotteryScheduleModal(false)}>
                 <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
                   <View style={{ backgroundColor: '#1e293b', borderRadius: 16, padding: 20, maxHeight: '80%' }}>
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 16, textAlign: 'center' }}>Selecciona una Lotería</Text>
                     <ScrollView>
                       {LOTTERIES.map((l) => (
-                        <TouchableOpacity key={l} onPress={() => { setRaffleForm(s => ({...s, lottery: l})); setShowLotteryModal(false); }} style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <TouchableOpacity key={l} onPress={() => { setRaffleForm(s => ({...s, lottery: l})); setShowLotteryScheduleModal(false); }} style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                           <Ionicons name="ticket-outline" size={18} color="#fbbf24" />
                           <Text style={{ color: '#e2e8f0', fontSize: 16 }}>{l}</Text>
                         </TouchableOpacity>
                       ))}
                     </ScrollView>
-                    <TouchableOpacity onPress={() => setShowLotteryModal(false)} style={{ marginTop: 16, alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => setShowLotteryScheduleModal(false)} style={{ marginTop: 16, alignItems: 'center' }}>
                       <Text style={{ color: '#ef4444', fontSize: 16 }}>Cancelar</Text>
                     </TouchableOpacity>
                   </View>
@@ -3648,7 +3684,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               </TouchableOpacity>
               {styleForm.bannerImage ? (
                 <View style={{ position: 'relative', marginBottom: 12 }}>
-                  <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 8, backgroundColor: '#000' }} resizeMode="contain" />
+                  <Image source={{ uri: styleForm.bannerImage }} style={{ width: '100%', aspectRatio: 1, borderRadius: 8, backgroundColor: '#000' }} resizeMode="contain" />
                   <TouchableOpacity 
                     onPress={() => setStyleForm(s => ({ ...s, bannerImage: '' }))}
                     style={{ position: 'absolute', top: 8, right: 8, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 12, padding: 6 }}
@@ -4109,7 +4145,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               </View>
 
               <Text style={styles.section}>Rifa</Text>
-                <TouchableOpacity onPress={() => setRafflePickerVisible(true)} style={[styles.input, { justifyContent: 'center' }]}>
+                <TouchableOpacity onPress={() => setDashboardRafflePickerVisible(true)} style={[styles.input, { justifyContent: 'center' }]}>
                   <Text style={{ color: selectedRaffle ? '#fff' : '#94a3b8' }}>{selectedRaffle?.title || 'Seleccionar Rifa'}</Text>
                   <Ionicons name="chevron-down-outline" size={20} color="#94a3b8" style={{ position: 'absolute', right: 12 }} />
               </TouchableOpacity>
@@ -4166,7 +4202,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       >
                         <Text style={{ color: palette.muted, fontSize: 12 }}>Ticket: Bs. {r?.price || r?.ticketPrice || 0} • Cierre: {r?.endDate ? r.endDate.split('T')[0] : '—'}</Text>
                         {r?.style?.bannerImage ? (
-                          <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 10, marginTop: 10, backgroundColor: '#000' }} resizeMode="contain" />
+                          <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', aspectRatio: 1, borderRadius: 10, marginTop: 10, backgroundColor: '#000' }} resizeMode="contain" />
                         ) : null}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
                           <Text style={{ color: '#cbd5e1' }}>Vendidos: {sold}/{total}</Text>
@@ -4288,8 +4324,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
 
           <Modal visible={proofViewer.visible} transparent animationType="fade" onRequestClose={closeProofViewer}>
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
-              <TouchableOpacity onPress={closeProofViewer} style={{ position: 'absolute', top: 40, right: 20, padding: 10 }}>
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 16 }}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.7)' }]}
+                onPressIn={closeProofViewer}
+              />
+              <TouchableOpacity onPressIn={closeProofViewer} style={{ position: 'absolute', top: 40, right: 20, padding: 10 }}>
                 <Ionicons name="close" size={28} color="#fff" />
               </TouchableOpacity>
               {proofViewer.uri ? (
@@ -4337,7 +4377,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
             animationType="fade"
             onRequestClose={() => setPaymentRafflePickerVisible(false)}
           >
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 16 }}>
+            <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+              <Pressable
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.7)' }]}
+                onPressIn={() => setPaymentRafflePickerVisible(false)}
+              />
               <View style={{ backgroundColor: 'rgba(15, 23, 42, 0.96)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', padding: 14, maxHeight: '75%' }}>
                 <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, marginBottom: 10 }}>Seleccionar rifa (activas)</Text>
 
@@ -4378,7 +4422,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
                   <TouchableOpacity
-                    onPress={() => setPaymentRafflePickerVisible(false)}
+                    onPressIn={() => setPaymentRafflePickerVisible(false)}
                     style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
                   >
                     <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
@@ -4866,8 +4910,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               <Text style={styles.muted}>Verifica ganadores en tiempo real.</Text>
               
               <Text style={styles.section}>Rifa</Text>
-              <TouchableOpacity onPress={() => setShowLotteryModal(true)} style={[styles.input, { justifyContent: 'center' }]}>
-                  <Text style={{ color: lotteryCheck.raffleId ? '#fff' : '#94a3b8' }}>{raffles.find(r => r.id === lotteryCheck.raffleId)?.title || 'Seleccionar Rifa'}</Text>
+                <TouchableOpacity onPress={() => setShowLiveRaffleModal(true)} style={[styles.input, { justifyContent: 'center' }]}>
+                  <Text style={{ color: lotteryCheck.raffleId ? '#fff' : '#94a3b8' }}>{raffles.find(r => String(r.id) === String(lotteryCheck.raffleId))?.title || 'Seleccionar Rifa'}</Text>
                   <Ionicons name="chevron-down-outline" size={20} color="#94a3b8" style={{ position: 'absolute', right: 12 }} />
               </TouchableOpacity>
 
@@ -4914,12 +4958,66 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         </ScrollView>
         
         {/* Modals */}
-        <Modal visible={rafflePickerVisible} transparent animationType="fade" onRequestClose={() => setRafflePickerVisible(false)}>
-          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }}>
+        <Modal
+          visible={showLiveRaffleModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowLiveRaffleModal(false)}
+        >
+          <View style={{ flex: 1, justifyContent: 'center', padding: 16 }}>
+            <Pressable
+              style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.75)' }]}
+              onPressIn={() => setShowLiveRaffleModal(false)}
+            />
+            <View style={{ backgroundColor: '#0b1224', borderRadius: 16, padding: 14, maxHeight: '80%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+              <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center' }}>Selecciona una rifa activa</Text>
+
+              <ScrollView style={{ marginTop: 12 }}>
+                {(Array.isArray(raffles) ? raffles : [])
+                  .filter((r) => String(r?.status || '').toLowerCase() === 'active')
+                  .map((r) => (
+                    <TouchableOpacity
+                      key={String(r.id)}
+                      onPress={() => {
+                        setLotteryCheck((s) => ({ ...s, raffleId: String(r.id) }));
+                        setShowLiveRaffleModal(false);
+                      }}
+                      style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', marginBottom: 10 }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={2}>{String(r.title || `Rifa #${r.id}`)}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 6 }}>#{r.id}</Text>
+                    </TouchableOpacity>
+                  ))}
+
+                {(Array.isArray(raffles) ? raffles : []).filter((r) => String(r?.status || '').toLowerCase() === 'active').length === 0 ? (
+                  <View style={{ paddingVertical: 18 }}>
+                    <Text style={{ color: '#94a3b8', textAlign: 'center' }}>No hay rifas activas para mostrar.</Text>
+                  </View>
+                ) : null}
+              </ScrollView>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPressIn={() => setShowLiveRaffleModal(false)}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={dashboardRafflePickerVisible} transparent animationType="fade" onRequestClose={() => setDashboardRafflePickerVisible(false)}>
+          <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
+            <Pressable
+              style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.6)' }]}
+              onPressIn={() => setDashboardRafflePickerVisible(false)}
+            />
             <View style={{ backgroundColor: '#0f172a', borderRadius: 12, padding: 16, maxHeight: '70%' }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: 'bold' }}>Selecciona Rifa</Text>
-                <TouchableOpacity onPress={() => setRafflePickerVisible(false)}>
+                <TouchableOpacity onPressIn={() => setDashboardRafflePickerVisible(false)}>
                   <Ionicons name="close" size={22} color="#cbd5e1" />
                 </TouchableOpacity>
               </View>
@@ -4927,7 +5025,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 {raffles.filter(r => r).map((r) => (
                   <TouchableOpacity
                     key={r.id}
-                    onPress={() => { setSelectedRaffle(r); setRafflePickerVisible(false); }}
+                    onPress={() => { setSelectedRaffle(r); setDashboardRafflePickerVisible(false); }}
                     style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
                   >
                     <View>
