@@ -235,8 +235,8 @@ function MainContent() {
                           onPress={() => Linking.openURL('https://wa.me/584227930168')}
                           style={{
                             position: 'absolute',
-                            bottom: 80,
-                            right: 20,
+                            bottom: 92,
+                            left: 16,
                             backgroundColor: '#25D366',
                             width: 60,
                             height: 60,

@@ -7,7 +7,6 @@ import {
   FlatList,
   ActivityIndicator,
   Image,
-  ImageBackground,
   TouchableOpacity,
   Animated,
   Modal,
@@ -25,7 +24,68 @@ import { formatMoneyVES } from '../utils';
 import Announcements from '../components/Announcements';
 import PublicProfileModal from '../components/PublicProfileModal';
 import { FilledButton } from '../components/UI';
-import TopBar from '../components/TopBar';
+
+const BendecidosStrip = ({ numbers, digits }) => {
+  const opacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!Array.isArray(numbers) || numbers.length === 0) return;
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.35, duration: 650, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 650, useNativeDriver: true })
+      ])
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [numbers, opacity]);
+
+  if (!Array.isArray(numbers) || numbers.length === 0) return null;
+  const fmt = (n) => String(n).padStart(digits || 4, '0');
+  const shown = numbers.slice(0, 4);
+  const extra = numbers.length - shown.length;
+
+  return (
+    <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+      <Text style={{ color: '#fbbf24', fontWeight: '900', fontSize: 12 }}>Bendecidos:</Text>
+      <Animated.View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, opacity }}>
+        {shown.map((n) => (
+          <View key={n} style={{ backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(0,0,0,0.10)' }}>
+            <Text style={{ color: '#0f172a', fontWeight: '900', fontSize: 12 }}>{fmt(n)}</Text>
+          </View>
+        ))}
+        {extra > 0 ? (
+          <View style={{ backgroundColor: 'rgba(255,255,255,0.14)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
+            <Text style={{ color: '#e2e8f0', fontWeight: '900', fontSize: 12 }}>+{extra}</Text>
+          </View>
+        ) : null}
+      </Animated.View>
+    </View>
+  );
+};
+
+const getInstantWins = (item) => {
+  const raw = item?.instantWins ?? item?.style?.instantWins ?? [];
+  const toList = (v) => {
+    if (Array.isArray(v)) return v;
+    if (typeof v === 'string') {
+      return v
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+    return [];
+  };
+  const list = toList(raw)
+    .map((x) => {
+      const n = typeof x === 'number' ? x : Number(String(x).replace(/\D/g, ''));
+      if (!Number.isFinite(n)) return null;
+      return Math.max(0, Math.trunc(n));
+    })
+    .filter((x) => x !== null);
+
+  return Array.from(new Set(list)).slice(0, 12);
+};
 
 const PulsingBadge = () => {
   const scale = useRef(new Animated.Value(1)).current;
@@ -239,6 +299,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
     Animated.timing(heroAnim, { toValue: 1, duration: 600, useNativeDriver: true }).start();
   }, [heroAnim]);
 
+
   return (
     <SafeAreaView style={{ flex: 1 }}>
       <LinearGradient
@@ -268,21 +329,8 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         contentContainerStyle={[styles.scroll, { paddingBottom: 100 }]}
         ListHeaderComponent={
           <>
-            <View style={{ paddingHorizontal: 16, marginTop: 10, marginBottom: 14 }}>
-              <TopBar
-                balanceText={
-                  walletBalance === null
-                    ? 'Cargando...'
-                    : `${formatMoneyVES(walletBalance, { withSymbol: false, decimals: 2 })} VES`
-                }
-                onPressWallet={() => {
-                  setWalletQuickVisible(true);
-                  if (walletBalance === null) refreshWalletBalance();
-                }}
-                onPressNotifications={scrollToAnnouncements}
-                onPressProfile={() => (navigation.getParent?.() ? navigation.getParent().navigate('Perfil') : navigation.navigate('Perfil'))}
-              />
-              <View style={{ alignItems: 'center', marginTop: 10 }}>
+            <View style={{ paddingHorizontal: 16, marginTop: 14, marginBottom: 14 }}>
+              <View style={{ alignItems: 'center' }}>
                 <Text style={{ fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 0.6 }}>MEGA RIFAS</Text>
                 <View style={{ height: 3, width: 44, backgroundColor: palette.primary, borderRadius: 2, marginTop: 4 }} />
               </View>
@@ -404,6 +452,9 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
           const playDisabled = isClosed || isAgotada;
           const showDescription = !!String(item?.description || '').trim();
 
+          const digits = Number(item?.digits) || 4;
+          const instantWins = getInstantWins(item);
+
           const barFillColor = percentLeft >= 70 ? '#22c55e' : percentLeft >= 35 ? '#fbbf24' : '#ef4444';
 
             const reactionCounts = item.reactionCounts || {};
@@ -452,14 +503,19 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                            <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 14 }}>{item.user?.name?.charAt(0).toUpperCase() || 'M'}</Text>
                          )}
                       </View>
-                      <View>
-                          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
-                            {item.user?.name || 'MegaRifas Oficial'}
+                      <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                              {item.user?.name || 'MegaRifas Oficial'}
+                            </Text>
+                            {item.user?.identityVerified ? (
+                              <Ionicons name="star" size={14} color="#fbbf24" />
+                            ) : null}
+                          </View>
+                          <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                            ID: {item.user?.securityId || item.user?.publicId || '—'}
                           </Text>
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
-                            {item.user?.identityVerified && (
-                              <Text style={{ color: '#94a3b8', fontSize: 10 }}>Verificado</Text>
-                            )}
                             {userBoostActive && (
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(251, 191, 36, 0.12)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.35)' }}>
                                 <Ionicons name="flash" size={12} color="#fbbf24" />
@@ -480,32 +536,34 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                     </TouchableOpacity>
                 </View>
 
-                {/* Image (banner con tamaño estándar) */}
+                {/* Image (cuadro fijo): la imagen llena el cuadro (sin fondos/barras) */}
                 {(() => {
                   const w = Dimensions.get('window').width;
                   const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-                  const aspect = 1; // ancho/alto (cuadrado)
-                  const h = clamp(Math.round(w / aspect), 260, 520);
+                  // Medida estándar (como referencia del cuadro): evita que baje demasiado.
+                  const h = clamp(320, 300, 340);
                   return (
-                    <View style={{ width: '100%', height: h, backgroundColor: palette.surface, overflow: 'hidden' }}>
+                    <View style={{ width: '100%', height: h, backgroundColor: 'transparent', overflow: 'hidden' }}>
                     {gallery.length > 0 ? (
                         <ScrollView
                             horizontal
                             pagingEnabled
+                            snapToInterval={w}
+                            decelerationRate="fast"
                             showsHorizontalScrollIndicator={false}
-                            onScroll={(evt) => {
-                              const nextIndex = Math.round((evt.nativeEvent.contentOffset.x || 0) / Dimensions.get('window').width);
+                            onMomentumScrollEnd={(evt) => {
+                              const nextIndex = Math.round((evt.nativeEvent.contentOffset.x || 0) / w);
                               setCarouselIndex((prev) => (prev[item.id] === nextIndex ? prev : { ...prev, [item.id]: nextIndex }));
                             }}
-                            scrollEventThrottle={16}
                         >
                         {gallery.map((img, idx) => (
-                          <Image 
-                            key={idx} 
-                            source={{ uri: img }} 
-                            style={{ width: w, height: h, backgroundColor: '#000' }} 
-                            resizeMode="contain" 
-                          />
+                          <View key={idx} style={{ width: w, height: h, backgroundColor: 'transparent' }}>
+                            <Image
+                              source={{ uri: img }}
+                              style={{ width: w, height: h, backgroundColor: 'transparent', alignSelf: 'stretch' }}
+                              resizeMode="cover"
+                            />
+                          </View>
                             ))}
                         </ScrollView>
                     ) : (
@@ -575,7 +633,40 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
 
                 {/* Content */}
                 <View style={{ paddingHorizontal: 12, paddingBottom: 16 }}>
-                    <Text style={{ color: '#fff', fontWeight: 'bold', marginBottom: 4 }}>{item.title}</Text>
+                    {/* Título + barra % arriba (sin chocar con títulos largos) */}
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+                      <Text style={{ flex: 1, color: '#fff', fontWeight: 'bold' }} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <View
+                        style={{
+                          width: 140,
+                          height: 14,
+                          borderRadius: 999,
+                          backgroundColor: 'rgba(239, 68, 68, 0.22)',
+                          overflow: 'hidden',
+                          borderWidth: 1,
+                          borderColor: 'rgba(255,255,255,0.08)',
+                          position: 'relative',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          marginTop: 2
+                        }}
+                      >
+                        <View
+                          style={{
+                            height: '100%',
+                            width: `${Math.max(2, percentLeft)}%`,
+                            backgroundColor: barFillColor,
+                            borderRadius: 999
+                          }}
+                        />
+                        <Text style={{ position: 'absolute', color: '#fff', fontSize: 11, fontWeight: '900' }}>
+                          {`${Math.round(percentLeft)}%`}
+                        </Text>
+                      </View>
+                    </View>
+
                     {showDescription && (
                       <TouchableOpacity
                         disabled={!item?.user?.id}
@@ -594,84 +685,10 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                         <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: 'rgba(239, 68, 68, 0.14)', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.35)' }}>
                           <Text style={{ color: '#fecaca', fontSize: 11, fontWeight: '900' }}>AGOTADA</Text>
                         </View>
-
-                          {(() => {
-                            const raw = item?.instantWins ?? item?.style?.instantWins ?? [];
-                            const digits = Number(item?.digits) || 4;
-                            const toList = (v) => {
-                              if (Array.isArray(v)) return v;
-                              if (typeof v === 'string') {
-                                return v
-                                  .split(',')
-                                  .map((x) => x.trim())
-                                  .filter(Boolean);
-                              }
-                              return [];
-                            };
-                            const list = toList(raw)
-                              .map((x) => {
-                                const n = typeof x === 'number' ? x : Number(String(x).replace(/\D/g, ''));
-                                if (!Number.isFinite(n)) return null;
-                                return Math.max(0, Math.trunc(n));
-                              })
-                              .filter((x) => x !== null);
-
-                            const unique = Array.from(new Set(list)).slice(0, 12);
-                            if (!unique.length) return null;
-
-                            const fmt = (n) => String(n).padStart(digits, '0');
-                            const shown = unique.slice(0, 6).map(fmt).join(', ');
-                            const suffix = unique.length > 6 ? '…' : '';
-
-                            return (
-                              <View style={{ marginTop: 8, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(251, 191, 36, 0.10)', borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.20)' }}>
-                                <Text style={{ color: '#cbd5e1', fontSize: 12, lineHeight: 16 }} numberOfLines={2}>
-                                  <Text style={{ color: '#fbbf24', fontWeight: '900' }}>Bendecidos: </Text>
-                                  {shown}{suffix}
-                                </Text>
-                              </View>
-                            );
-                          })()}
-                      ) : (
-                        <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View
-                              style={{
-                                width: 150,
-                                height: 14,
-                                borderRadius: 999,
-                                backgroundColor: 'rgba(239, 68, 68, 0.22)',
-                                overflow: 'hidden',
-                                borderWidth: 1,
-                                borderColor: 'rgba(255,255,255,0.08)',
-                                position: 'relative',
-                                justifyContent: 'center',
-                                alignItems: 'center'
-                              }}
-                            >
-                              <View
-                                style={{
-                                  height: '100%',
-                                  width: `${Math.max(2, percentLeft)}%`,
-                                  backgroundColor: barFillColor,
-                                  borderRadius: 999
-                                }}
-                              />
-                              <Text
-                                style={{
-                                  position: 'absolute',
-                                  color: '#fff',
-                                  fontSize: 11,
-                                  fontWeight: '900'
-                                }}
-                              >
-                                {`${Math.round(percentLeft)}%`}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-                      )}
+                      ) : null}
                     </View>
+
+                    <BendecidosStrip numbers={instantWins} digits={digits} />
                 </View>
               </View>
             );

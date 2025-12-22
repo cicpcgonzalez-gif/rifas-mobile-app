@@ -1361,6 +1361,52 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     const params = new URLSearchParams();
     params.append('raffleId', raffleId);
 
+    const mapAdminTicketToVerifierMatch = (t) => {
+      const safe = t && typeof t === 'object' ? t : {};
+      const raffle = safe.raffle && typeof safe.raffle === 'object' ? safe.raffle : {};
+      const seller = safe.seller && typeof safe.seller === 'object' ? safe.seller : (raffle.user && typeof raffle.user === 'object' ? raffle.user : {});
+      const buyer = safe.user && typeof safe.user === 'object' ? safe.user : {};
+
+      const localRaffle = (Array.isArray(ticketRaffleOptions) ? ticketRaffleOptions : []).find(
+        (r) => String(r?.id) === String(raffle?.id || safe?.raffleId || raffleId)
+      );
+      const digits = raffle?.digits ?? localRaffle?.digits;
+      const price = raffle?.price ?? raffle?.ticketPrice ?? localRaffle?.price ?? localRaffle?.ticketPrice;
+      const description = raffle?.description ?? localRaffle?.description;
+
+      return {
+        id: safe.id,
+        serialNumber: safe.serialNumber,
+        number: safe.number,
+        status: safe.status,
+        createdAt: safe.createdAt,
+        receiptSignature: safe.receiptSignature,
+        raffle: {
+          id: raffle?.id ?? safe?.raffleId ?? localRaffle?.id ?? Number(raffleId),
+          title: raffle?.title ?? safe?.raffleTitle ?? localRaffle?.title,
+          description,
+          digits,
+          price
+        },
+        seller: {
+          id: seller?.id,
+          publicId: seller?.publicId,
+          name: seller?.name,
+          email: seller?.email,
+          avatar: seller?.avatar,
+          securityIdLast8: seller?.securityIdLast8
+        },
+        buyer: {
+          id: buyer?.id,
+          publicId: buyer?.publicId,
+          name: buyer?.name,
+          email: buyer?.email,
+          phone: buyer?.phone,
+          cedula: buyer?.cedula
+        }
+      };
+    };
+
     if (ticketVerifyType === 'cedula') {
       const cedula = normalizeDigits(raw);
       if (!cedula) {
@@ -1381,29 +1427,37 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         Alert.alert('Dato inválido', 'Ingresa un nombre válido.');
         return;
       }
-      params.append('name', name);
+      // /admin/tickets soporta búsqueda por nombre vía `q` (escaneo en memoria con campos desencriptados)
+      params.append('q', name);
     } else {
-      // serial
-      params.append('serial', raw);
+      // serial: usar `q` para soportar fragmentos (ej: últimos 6-8 caracteres)
+      params.append('q', raw);
     }
 
     setVerifierLoading(true);
     setVerifierResult(null);
     try {
       const query = params.toString() ? `?${params.toString()}` : '';
-      const { res, data } = await api(`/admin/tickets/verify${query}`);
-      if (res.ok && data?.valid && Array.isArray(data?.matches) && data.matches.length) {
-        setVerifierResult({ status: 'found', matches: data.matches });
+      // IMPORTANTE: usamos /admin/tickets (misma fuente que “Cargar lista”) para evitar inconsistencias.
+      const { res, data } = await api(`/admin/tickets${query}`);
+
+      if (res.ok && Array.isArray(data)) {
+        const mapped = data.map(mapAdminTicketToVerifierMatch).filter(Boolean);
+        if (mapped.length) {
+          setVerifierResult({ status: 'found', matches: mapped });
+          return;
+        }
+        setVerifierResult({ status: 'not_found', matches: [] });
         return;
       }
 
       const serverMsg = String(data?.error || data?.message || '').trim();
-      if (!res.ok && serverMsg) {
-        setVerifierResult({ status: 'error', error: serverMsg, matches: [] });
+      if (res?.status === 404) {
+        setVerifierResult({ status: 'not_found', matches: [] });
         return;
       }
 
-      setVerifierResult({ status: 'not_found', matches: [] });
+      setVerifierResult({ status: 'error', error: serverMsg || 'Error de verificación', matches: [] });
     } catch (_e) {
       setVerifierResult({ status: 'error', error: 'Error de conexión al verificar.', matches: [] });
     } finally {
@@ -1417,6 +1471,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     saSelectedAdmin?.activeRaffles,
     saSelectedAdmin?.id,
     ticketFilters?.raffleId,
+    ticketRaffleOptions,
     ticketVerifyQuery,
     ticketVerifyType
   ]);
@@ -2990,8 +3045,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                               </Text>
                             </View>
                           ) : (
-                            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: '#f87171' }}>
-                              <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>No se encontraron coincidencias</Text>
+                            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(148,163,184,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+                              <Text style={{ color: '#e2e8f0', fontWeight: '900', textAlign: 'center' }}>No se encontraron coincidencias</Text>
                             </View>
                           )}
                         </View>
