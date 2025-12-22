@@ -303,11 +303,18 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     });
     if (res.ok) {
       const nums = Array.isArray(data.numbers) ? data.numbers : [];
+      const instantWins = Array.isArray(data.instantWinsAwarded) ? data.instantWinsAwarded : [];
       setAssignedNumbers(nums);
       numbersAnim.setValue(0);
       Animated.spring(numbersAnim, { toValue: 1, friction: 6, useNativeDriver: true }).start();
       const positive = nums.length <= 1 ? '¡Tu número ya está en juego!' : '¡Tus números ya están en juego!';
-      Alert.alert('Compra confirmada', `${positive}\nNúmeros: ${nums.map(n => formatTicketNumber(n, current.digits)).join(', ')}`);
+      const instantLine = instantWins.length
+        ? `\n\n¡Premio rápido! Ganaste con: ${instantWins
+            .map((w) => formatTicketNumber(w?.ticketNumber, current.digits))
+            .filter(Boolean)
+            .join(', ')}`
+        : '';
+      Alert.alert('Compra confirmada', `${positive}\nNúmeros: ${nums.map(n => formatTicketNumber(n, current.digits)).join(', ')}${instantLine}`);
       setPaymentStep(1);
       setManualProof(null);
     } else {

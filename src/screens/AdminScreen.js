@@ -695,7 +695,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [regenerating, setRegenerating] = useState(false);
   const [announcementForm, setAnnouncementForm] = useState({ title: '', content: '', imageUrl: '' });
   const [savingAnnouncement, setSavingAnnouncement] = useState(false);
-  const [winnerForm, setWinnerForm] = useState({ raffleId: '', ticketNumber: '', winnerName: '', prize: '', testimonial: '', photoUrl: '' });
+  const [winnerForm, setWinnerForm] = useState({ raffleId: '', ticketNumber: '', drawSlot: '', prize: '', testimonial: '', photoUrl: '' });
   const [savingWinner, setSavingWinner] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '' });
   const [changingPassword, setChangingPassword] = useState(false);
@@ -838,6 +838,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setWinnerRaffleId(lotteryCheck.raffleId);
     setWinningNumberInput(String(lotteryWinner.number));
     setWinnerPhoto(null);
+    setWinnerForm((s) => ({
+      ...s,
+      raffleId: String(lotteryCheck.raffleId || ''),
+      ticketNumber: String(lotteryWinner.number || ''),
+      drawSlot: s.drawSlot || ''
+    }));
     setWinnerModalVisible(true);
   };
 
@@ -874,7 +880,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   };
 
   const submitWinner = async () => {
-    if (!winnerForm.raffleId || !winnerForm.winnerName || !winnerForm.prize) return Alert.alert('Faltan datos', 'Rifa, Nombre y Premio son obligatorios.');
+    if (!winnerForm.raffleId || !winnerForm.ticketNumber || !winnerForm.drawSlot || !winnerForm.prize) {
+      return Alert.alert('Faltan datos', 'Rifa, Ticket #, Horario (1pm/4pm/10pm) y Premio son obligatorios.');
+    }
     setSavingWinner(true);
     const { res, data } = await api('/admin/winners', {
       method: 'POST',
@@ -882,7 +890,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     });
     if (res.ok) {
       Alert.alert('Listo', 'Ganador publicado en el Muro de la Fama.');
-      setWinnerForm({ raffleId: '', ticketNumber: '', winnerName: '', prize: '', testimonial: '', photoUrl: '' });
+      setWinnerForm({ raffleId: '', ticketNumber: '', drawSlot: '', prize: '', testimonial: '', photoUrl: '' });
     } else {
       Alert.alert('Error', data?.error || 'No se pudo publicar.');
     }
@@ -1046,12 +1054,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setTicketsLoading(false);
   }, [api, ticketFilters, isSuperadmin, saSelectedAdmin?.id, saSelectedAdmin?.activeRaffles]);
 
-  const activeRafflesForTickets = useMemo(() => {
+  const verifiableRafflesForTickets = useMemo(() => {
     const list = Array.isArray(raffles) ? raffles : [];
     return list
       .filter((r) => {
         const st = String(r?.status || 'active').toLowerCase();
-        return st === 'active';
+        return st === 'active' || st === 'closed';
       })
       .sort((a, b) => {
         const ad = a?.activatedAt || a?.createdAt;
@@ -1082,15 +1090,15 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (activeSection !== 'tickets') return;
     if (isSuperadmin) return;
     if (String(ticketFilters?.raffleId || '').trim()) return;
-    if (!activeRafflesForTickets.length) return;
-    setTicketFilters((s) => ({ ...s, raffleId: String(activeRafflesForTickets[0].id) }));
-  }, [activeSection, isSuperadmin, ticketFilters?.raffleId, activeRafflesForTickets]);
+    if (!verifiableRafflesForTickets.length) return;
+    setTicketFilters((s) => ({ ...s, raffleId: String(verifiableRafflesForTickets[0].id) }));
+  }, [activeSection, isSuperadmin, ticketFilters?.raffleId, verifiableRafflesForTickets]);
 
   const loadSuperadminActiveRaffles = useCallback(async () => {
     if (!isSuperadmin) return;
     setSaActiveRafflesLoading(true);
     try {
-      const { res, data } = await api('/superadmin/admins/active-raffles');
+      const { res, data } = await api('/superadmin/admins/active-raffles?includeClosed=1');
       if (res.ok && Array.isArray(data)) {
         setSaActiveRafflesByAdmin(data.filter(Boolean));
       } else {
@@ -1269,8 +1277,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (isSuperadmin) {
       return Array.isArray(saSelectedAdmin?.activeRaffles) ? saSelectedAdmin.activeRaffles : [];
     }
-    return activeRafflesForTickets;
-  }, [activeRafflesForTickets, isSuperadmin, saSelectedAdmin?.activeRaffles]);
+    return verifiableRafflesForTickets;
+  }, [verifiableRafflesForTickets, isSuperadmin, saSelectedAdmin?.activeRaffles]);
 
   const selectedTicketRaffleLabel = useMemo(() => {
     const id = String(ticketFilters?.raffleId || '').trim();
@@ -1283,11 +1291,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   const allowedActiveTicketRaffleIds = useMemo(() => {
     const ids = new Set();
-    (Array.isArray(activeRafflesForTickets) ? activeRafflesForTickets : []).forEach((r) => {
+    (Array.isArray(verifiableRafflesForTickets) ? verifiableRafflesForTickets : []).forEach((r) => {
       if (r?.id != null) ids.add(String(r.id));
     });
     return ids;
-  }, [activeRafflesForTickets]);
+  }, [verifiableRafflesForTickets]);
 
   const verifyTicketByOneField = useCallback(async () => {
     const raffleId = String(ticketFilters?.raffleId || '').trim();
@@ -1357,11 +1365,18 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       const { res, data } = await api(`/admin/tickets/verify${query}`);
       if (res.ok && data?.valid && Array.isArray(data?.matches) && data.matches.length) {
         setVerifierResult({ status: 'found', matches: data.matches });
-      } else {
-        setVerifierResult({ status: 'not_found', matches: [] });
+        return;
       }
-    } catch (_e) {
+
+      const serverMsg = String(data?.error || data?.message || '').trim();
+      if (!res.ok && serverMsg) {
+        setVerifierResult({ status: 'error', error: serverMsg, matches: [] });
+        return;
+      }
+
       setVerifierResult({ status: 'not_found', matches: [] });
+    } catch (_e) {
+      setVerifierResult({ status: 'error', error: 'Error de conexión al verificar.', matches: [] });
     } finally {
       setVerifierLoading(false);
     }
@@ -2938,6 +2953,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                                 })}
                               </View>
                             </>
+                          ) : verifierResult.status === 'error' ? (
+                            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: '#f87171' }}>
+                              <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>No se pudo verificar</Text>
+                              <Text style={{ color: '#fff', textAlign: 'center', marginTop: 6 }}>
+                                {String(verifierResult.error || 'Error desconocido')}
+                              </Text>
+                            </View>
                           ) : (
                             <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: '#f87171' }}>
                               <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>No se encontraron coincidencias</Text>
@@ -4877,16 +4899,16 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               </View>
               <TextInput style={styles.input} placeholder="ID Rifa" value={winnerForm.raffleId} onChangeText={(v) => setWinnerForm(s => ({ ...s, raffleId: v }))} />
               <TextInput style={styles.input} placeholder="Ticket #" value={winnerForm.ticketNumber} onChangeText={(v) => setWinnerForm(s => ({ ...s, ticketNumber: v }))} keyboardType="numeric" />
-              <TextInput style={styles.input} placeholder="Nombre Ganador" value={winnerForm.winnerName} onChangeText={(v) => setWinnerForm(s => ({ ...s, winnerName: v }))} />
+              <TextInput style={styles.input} placeholder="Horario (1pm / 4pm / 10pm)" value={winnerForm.drawSlot} onChangeText={(v) => setWinnerForm(s => ({ ...s, drawSlot: v }))} />
               <TextInput style={styles.input} placeholder="Premio" value={winnerForm.prize} onChangeText={(v) => setWinnerForm(s => ({ ...s, prize: v }))} />
               <TextInput style={styles.input} placeholder="Testimonio (opcional)" value={winnerForm.testimonial} onChangeText={(v) => setWinnerForm(s => ({ ...s, testimonial: v }))} multiline />
               
-              <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickAnnouncementImage}>
+              <TouchableOpacity style={[styles.button, styles.secondaryButton, { marginBottom: 12 }]} onPress={pickWinnerImage}>
                 <Ionicons name="image-outline" size={18} color={palette.primary} />
                 <Text style={[styles.secondaryText, { marginLeft: 8 }]}>Foto del Ganador</Text>
               </TouchableOpacity>
               
-              <FilledButton title={savingWinner ? 'Publicando...' : 'Publicar Ganador'} onPress={() => { /* Implement saveWinner */ }} loading={savingWinner} disabled={savingWinner} icon={<Ionicons name="trophy-outline" size={18} color="#fff" />} />
+              <FilledButton title={savingWinner ? 'Publicando...' : 'Publicar Ganador'} onPress={submitWinner} loading={savingWinner} disabled={savingWinner} icon={<Ionicons name="trophy-outline" size={18} color="#fff" />} />
             </View>
           )}
         </ScrollView>

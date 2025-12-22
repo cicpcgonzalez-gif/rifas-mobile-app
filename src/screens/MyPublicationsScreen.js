@@ -19,6 +19,48 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
   const [loading, setLoading] = useState(false);
   const isSuperadmin = String(user?.role || '').toLowerCase() === 'superadmin';
 
+  const normalizeBlessedNumbers = (raffle) => {
+    const style = raffle?.style && typeof raffle.style === 'object' ? raffle.style : {};
+    const raw = style.instantWins ?? raffle?.instantWins;
+    const out = [];
+
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        if (x == null) continue;
+        if (typeof x === 'number') {
+          const n = Math.trunc(x);
+          if (Number.isFinite(n) && n > 0) out.push(n);
+        } else if (typeof x === 'string') {
+          const n = Number(String(x).trim());
+          if (Number.isFinite(n) && n > 0) out.push(Math.trunc(n));
+        } else if (typeof x === 'object') {
+          const n = Number(x.number ?? x.ticketNumber);
+          if (Number.isFinite(n) && n > 0) out.push(Math.trunc(n));
+        }
+      }
+    } else if (typeof raw === 'string') {
+      raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((p) => {
+          const n = Number(p);
+          if (Number.isFinite(n) && n > 0) out.push(Math.trunc(n));
+        });
+    }
+
+    const unique = Array.from(new Set(out)).sort((a, b) => a - b);
+    return unique;
+  };
+
+  const formatTicketNumber = (value, digits = 4) => String(value ?? '').padStart(digits, '0');
+
+  const getDigits = (raffle) => {
+    const style = raffle?.style && typeof raffle.style === 'object' ? raffle.style : {};
+    const d = Number(raffle?.digits ?? style?.digits);
+    return Number.isFinite(d) && d > 0 ? d : 4;
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -103,6 +145,28 @@ export default function MyPublicationsScreen({ api, navigation, user }) {
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.itemTitle, { color: '#fff' }]}>{item.title}</Text>
                       <Text style={styles.muted}>{item.status === 'closed' ? 'CERRADA' : 'ACTIVA'} • Tickets: {item.soldTickets || 0}/{item.totalTickets || 0}</Text>
+
+                      {(() => {
+                        const blessed = normalizeBlessedNumbers(item);
+                        if (!blessed.length) return null;
+                        const digits = getDigits(item);
+
+                        const maxShow = 6;
+                        const shown = blessed.slice(0, maxShow).map((n) => formatTicketNumber(n, digits));
+                        const remaining = blessed.length - shown.length;
+                        const text = remaining > 0
+                          ? `${shown.join(', ')}, +${remaining}`
+                          : shown.join(', ');
+
+                        return (
+                          <View style={{ marginTop: 8 }}>
+                            <Text style={[styles.muted, { lineHeight: 18 }]}>
+                              <Text style={{ color: '#fff', fontWeight: '800' }}>Números Bendecidos:</Text>{' '}
+                              {text}
+                            </Text>
+                          </View>
+                        );
+                      })()}
 
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 8 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>

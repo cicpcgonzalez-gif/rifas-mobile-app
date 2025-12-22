@@ -5,11 +5,13 @@ import {
   Text,
   FlatList,
   ActivityIndicator,
-  TouchableOpacity
+  TouchableOpacity,
+  Alert
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as SecureStore from 'expo-secure-store';
 import { palette } from '../theme';
 import { styles } from '../styles';
 import { ProgressBar } from '../components/UI';
@@ -66,12 +68,58 @@ export default function MyRafflesScreen({ api, navigation }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const HIDDEN_KEY = 'hidden_ticket_raffle_ids_v1';
+
+  const loadHiddenRaffleIds = useCallback(async () => {
+    try {
+      const raw = await SecureStore.getItemAsync(HIDDEN_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      const arr = Array.isArray(parsed) ? parsed : [];
+      return new Set(arr.map((x) => String(x)));
+    } catch (_e) {
+      return new Set();
+    }
+  }, []);
+
+  const hideRaffleFromHistory = useCallback(async (raffleId) => {
+    const id = String(raffleId || '').trim();
+    if (!id) return;
+    const confirmed = await new Promise((resolve) => {
+      // eslint-disable-next-line no-undef
+      Alert.alert(
+        'Eliminar de mis tickets',
+        'Esto solo lo oculta de tu historial en el teléfono. ¿Deseas continuar?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Eliminar', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+
+    try {
+      const hidden = await loadHiddenRaffleIds();
+      hidden.add(id);
+      await SecureStore.setItemAsync(HIDDEN_KEY, JSON.stringify(Array.from(hidden)));
+      setItems((prev) => (Array.isArray(prev) ? prev.filter((it) => String(it?.raffle?.id || '') !== id) : []));
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [loadHiddenRaffleIds]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const hidden = await loadHiddenRaffleIds();
       const { res, data } = await api('/me/raffles');
       if (res.ok && Array.isArray(data)) {
-        setItems(data.filter(Boolean));
+        const list = data
+          .filter(Boolean)
+          .filter((it) => {
+            const rid = String(it?.raffle?.id || '').trim();
+            return !rid || !hidden.has(rid);
+          });
+        setItems(list);
         setError('');
       } else {
         setItems([]);
@@ -82,7 +130,7 @@ export default function MyRafflesScreen({ api, navigation }) {
       setError('No se pudo cargar');
     }
     setLoading(false);
-  }, [api]);
+  }, [api, loadHiddenRaffleIds]);
 
   useFocusEffect(
     useCallback(() => {
@@ -95,12 +143,24 @@ export default function MyRafflesScreen({ api, navigation }) {
     const raffle = item.raffle || {};
     const progress = raffle?.stats?.progress || 0;
     const isWinner = !!item.isWinner;
-    const status = isWinner ? 'Ganador' : item.status || 'Activo';
-    const statusColor = isWinner ? '#fbbf24' : status === 'approved' ? '#4ade80' : status === 'pending' ? '#fbbf24' : '#94a3b8';
+    const resultsPublished = !!item.resultsPublished;
+    const raffleStatus = String(raffle?.status || item.status || '').toLowerCase();
+    const isClosed = raffleStatus === 'closed';
+
+    const status = isWinner
+      ? 'Ganador'
+      : isClosed && resultsPublished
+        ? 'No ganaste'
+        : isClosed
+          ? 'Esperando resultados'
+          : 'Activa';
+
+    const statusColor = isWinner ? '#fbbf24' : (status === 'No ganaste' ? '#f87171' : (isClosed ? '#fbbf24' : '#4ade80'));
     const numbers = Array.isArray(item.numbers) ? item.numbers.filter((n) => n !== null && n !== undefined) : [];
     const qty = numbers.length;
-    const unitPrice = raffle?.price;
-    const totalPrice = Number.isFinite(Number(unitPrice)) ? Number(unitPrice) * qty : null;
+    const unitPrice = item?.payment?.unitPrice ?? item?.unitPrice ?? item?.price ?? raffle?.ticketPrice ?? raffle?.price;
+    const unitPriceNum = Number(unitPrice);
+    const totalPrice = Number.isFinite(unitPriceNum) ? unitPriceNum * qty : null;
     const serialShort = item.serialNumber ? String(item.serialNumber).slice(-8).toUpperCase() : (item.id ? String(item.id) : '—');
 
     const purchasedAt = item?.payment?.purchasedAt || item.createdAt;
@@ -123,9 +183,10 @@ export default function MyRafflesScreen({ api, navigation }) {
                 ? 'Binance'
                 : prov || '—';
 
-    const totalSpent = item?.payment?.totalSpent;
+    const totalSpentRaw = item?.payment?.totalSpent;
+    const totalSpent = Number.isFinite(Number(totalSpentRaw)) ? Number(totalSpentRaw) : null;
     const motto = stableMottoForSeed(item?.serialNumber || `${raffle?.id || ''}-${serialShort}`);
-    const footerMotto = stableMottoForSeed(`footer-${item?.serialNumber || item?.id || `${raffle?.id || ''}-${serialShort}`}`);
+    const canHide = isClosed && resultsPublished && !isWinner;
 
     return (
       <View style={{
@@ -171,12 +232,25 @@ export default function MyRafflesScreen({ api, navigation }) {
 
             {qty > 0 ? (
               <View style={{ marginTop: 8 }}>
-                {numbers.map((n, idx) => (
-                  <View key={`${n}-${idx}`} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: idx === qty - 1 ? 0 : 1, borderBottomColor: 'rgba(15, 23, 42, 0.06)' }}>
-                    <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace' }}>#{String(idx + 1).padStart(2, '0')}</Text>
-                    <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace', fontWeight: '800' }}>{formatTicketNumber(n, raffle?.digits)}</Text>
-                  </View>
-                ))}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {numbers.map((n, idx) => (
+                    <View
+                      key={`${n}-${idx}`}
+                      style={{
+                        paddingVertical: 6,
+                        paddingHorizontal: 10,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: 'rgba(15, 23, 42, 0.10)',
+                        backgroundColor: 'rgba(15, 23, 42, 0.04)'
+                      }}
+                    >
+                      <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace', fontWeight: '800' }}>
+                        {formatTicketNumber(n, raffle?.digits)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             ) : (
               <Text style={{ color: 'rgba(15, 23, 42, 0.55)', fontSize: 12, marginTop: 6 }}>—</Text>
@@ -229,6 +303,7 @@ export default function MyRafflesScreen({ api, navigation }) {
           </View>
 
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 10 }}>
+            <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               {raffle && raffle.id ? (
                 <TouchableOpacity
                   onPress={() => navigation.navigate('RaffleDetail', { raffle, ticket: item })}
@@ -240,12 +315,13 @@ export default function MyRafflesScreen({ api, navigation }) {
               ) : (
                 <Text style={[styles.muted, { fontSize: 12 }]}>No disponible</Text>
               )}
+
+              {canHide && raffle?.id ? (
+                <TouchableOpacity onPress={() => hideRaffleFromHistory(raffle.id)}>
+                  <Text style={{ color: '#f87171', fontWeight: '900', fontSize: 13 }}>Eliminar</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-            
-            <View style={{ marginTop: 12, alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(15,23,42,0.06)', paddingTop: 8 }}>
-              <Text style={{ color: palette.primary, fontSize: 11, fontStyle: 'italic', fontWeight: '600' }}>
-                "{footerMotto}"
-              </Text>
             </View>
         </View>
       </View>
