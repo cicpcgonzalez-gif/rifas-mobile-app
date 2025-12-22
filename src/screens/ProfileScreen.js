@@ -71,6 +71,11 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
     return role === 'admin' || role === 'superadmin' || role === 'organizer';
   }, [profile?.role]);
 
+  const isAdminOrSuperadmin = useMemo(() => {
+    const role = String(profile?.role || '').trim().toLowerCase();
+    return role === 'admin' || role === 'superadmin';
+  }, [profile?.role]);
+
   const { activePublications, closedPublications } = useMemo(() => {
     const list = Array.isArray(myPublications) ? myPublications : [];
     const active = [];

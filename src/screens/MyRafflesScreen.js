@@ -125,6 +125,7 @@ export default function MyRafflesScreen({ api, navigation }) {
 
     const totalSpent = item?.payment?.totalSpent;
     const motto = stableMottoForSeed(item?.serialNumber || `${raffle?.id || ''}-${serialShort}`);
+    const footerMotto = stableMottoForSeed(`footer-${item?.serialNumber || item?.id || `${raffle?.id || ''}-${serialShort}`}`);
 
     return (
       <View style={{
@@ -243,7 +244,7 @@ export default function MyRafflesScreen({ api, navigation }) {
             
             <View style={{ marginTop: 12, alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(15,23,42,0.06)', paddingTop: 8 }}>
               <Text style={{ color: palette.primary, fontSize: 11, fontStyle: 'italic', fontWeight: '600' }}>
-                "{getRandomLema()}"
+                "{footerMotto}"
               </Text>
             </View>
         </View>
