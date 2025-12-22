@@ -165,14 +165,24 @@ export default function PublicProfileScreen({ route, navigation, api }) {
           <View style={[styles.card, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
             <View style={{ alignItems: 'center' }}>
               {profile.avatar ? (
-                <Image source={{ uri: profile.avatar }} style={{ width: 100, height: 100, borderRadius: 50 }} />
+                <Image source={{ uri: profile.avatar }} style={{ width: 84, height: 84, borderRadius: 42 }} />
               ) : (
-                <View style={{ width: 100, height: 100, borderRadius: 50, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="person" size={48} color={palette.muted} />
+                <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: palette.surface, alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="person" size={40} color={palette.muted} />
                 </View>
               )}
 
-              <Text style={[styles.title, { marginTop: 12 }]}>{profile.name}</Text>
+              <Text style={[styles.title, { marginTop: 10, fontSize: 22, marginBottom: 0 }]} numberOfLines={1}>
+                {profile.name}
+              </Text>
+
+              <Text style={[styles.muted, { marginTop: 4 }]} numberOfLines={1}>
+                ID: {profile.securityId || profile.publicId || '—'}
+              </Text>
+
+              <Text style={[styles.muted, { marginTop: 6, textAlign: 'center' }]} numberOfLines={2}>
+                Perfil público • Compra segura • Atención directa
+              </Text>
 
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
                 {profile.identityVerified && (
@@ -203,7 +213,9 @@ export default function PublicProfileScreen({ route, navigation, api }) {
               ) : null}
 
               {profile.bio ? (
-                <Text style={{ color: palette.text, textAlign: 'center', marginTop: 12 }}>{profile.bio}</Text>
+                <Text style={{ color: palette.text, textAlign: 'center', marginTop: 10 }} numberOfLines={3}>
+                  {profile.bio}
+                </Text>
               ) : null}
 
               {profile.socials && (

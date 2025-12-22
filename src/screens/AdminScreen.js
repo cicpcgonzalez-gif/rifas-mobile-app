@@ -32,6 +32,7 @@ import { palette } from '../theme';
 import { FilledButton, OutlineButton } from '../components/UI';
 import { ENV } from '../config/env';
 import { formatMoneyVES } from '../utils';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const formatTicketNumber = (value, digits = 4) => String(value ?? '').padStart(digits, '0');
 
@@ -337,6 +338,7 @@ const normalizeImage = async (
 export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const route = useRoute();
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const lastEditHandledRef = useRef(null);
   const bannerAssetRef = useRef(null);
   const galleryAssetsRef = useRef([]);
@@ -3806,6 +3808,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   loading={savingRaffle}
                   disabled={savingRaffle}
                   icon={<Ionicons name={raffleForm.id ? 'create-outline' : 'add-circle-outline'} size={18} color="#fff" />}
+                  style={{ flex: 1 }}
                 />
                 {raffleForm.id ? (
                   <OutlineButton title="Nueva" onPress={resetRaffleDraft} icon={<Ionicons name="refresh-outline" size={18} color={palette.primary} />} />
@@ -3899,8 +3902,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       })()}
                     </ScrollView>
 
-                    <View style={{ padding: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', gap: 10 }}>
-                      <OutlineButton title="Cancelar" onPress={() => setPublishPreviewVisible(false)} />
+                    <View style={{ paddingTop: 14, paddingHorizontal: 14, paddingBottom: 14 + (insets?.bottom || 0), borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', gap: 10 }}>
+                      <OutlineButton title="Cancelar" onPress={() => setPublishPreviewVisible(false)} style={{ flex: 1 }} />
                       <FilledButton
                         title="Publicar"
                         onPress={() => {
@@ -3908,6 +3911,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           submitRaffle();
                         }}
                         icon={<Ionicons name="rocket-outline" size={18} color="#fff" />}
+                        style={{ flex: 1 }}
                       />
                     </View>
                   </View>

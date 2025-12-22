@@ -44,7 +44,7 @@ export function FilledButton({ title, onPress, disabled, loading, icon, style })
       }}
       disabled={isDisabled}
       activeOpacity={0.85}
-      style={[{ width: '100%', borderRadius: 12, overflow: 'hidden', opacity: isDisabled ? 0.7 : 1 }, style]}
+      style={[{ alignSelf: 'stretch', borderRadius: 12, overflow: 'hidden', opacity: isDisabled ? 0.7 : 1 }, style]}
     >
       <LinearGradient
         colors={['#7c3aed', '#4f46e5']}

@@ -660,37 +660,80 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
         ) : profile ? (
           <>
             {/* MURAL VIEW */}
-            <View style={[styles.card, styles.profileHeader, { alignItems: 'center', paddingVertical: 30 }]}> 
-              <View style={styles.avatarGlow}>
-                <View style={styles.avatarRing}>
-                  {profile.avatar ? (
-                    <Image source={{ uri: profile.avatar }} style={styles.avatar} />
-                  ) : (
-                    <View style={[styles.avatar, { alignItems: 'center', justifyContent: 'center' }]}>
-                      <Ionicons name="person" size={36} color={palette.subtext} />
+            <View style={[styles.card, styles.profileHeader, { paddingVertical: 16, paddingHorizontal: 14 }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+                <View style={[styles.avatarGlow, { padding: 4, marginBottom: 0 }]}>
+                  <View style={[styles.avatarRing, { padding: 3 }]}>
+                    {profile.avatar ? (
+                      <Image source={{ uri: profile.avatar }} style={[styles.avatar, { width: 72, height: 72, borderRadius: 36, marginBottom: 0 }]} />
+                    ) : (
+                      <View style={[styles.avatar, { width: 72, height: 72, borderRadius: 36, marginBottom: 0, alignItems: 'center', justifyContent: 'center' }]}>
+                        <Ionicons name="person" size={30} color={palette.subtext} />
+                      </View>
+                    )}
+                  </View>
+                </View>
+
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.itemTitle, { fontSize: 20 }]} numberOfLines={1}>
+                    {profile.name || 'Usuario'}
+                  </Text>
+
+                  <Text style={[styles.muted, { marginTop: 2 }]} numberOfLines={1}>
+                    ID: {profile.securityId || profile.publicId || '—'}
+                  </Text>
+
+                  {(!!profile.identityVerified || !!profile.verified) && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                      {!!profile.verified && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(59, 130, 246, 0.12)', borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.25)' }}>
+                          <Ionicons name="star-outline" size={14} color={palette.primary} />
+                          <Text style={{ color: palette.primary, fontWeight: 'bold', fontSize: 12 }}>Email verificado</Text>
+                        </View>
+                      )}
+
+                      {!!profile.identityVerified && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(251, 191, 36, 0.12)', borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.25)' }}>
+                          <Ionicons name="star" size={14} color="#fbbf24" />
+                          <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 12 }}>KYC verificado</Text>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
               </View>
-              
-              <Text style={[styles.itemTitle, { fontSize: 24, marginTop: 12 }]}>{profile.name || 'Usuario'}</Text>
-              
+
               {/* STATS ROW */}
-              <View style={{ flexDirection: 'row', justifyContent: 'center', width: '100%', marginTop: 20, paddingHorizontal: 10, gap: 28 }}>
-                <View style={{ alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{tickets.length}</Text>
+              <View style={{ flexDirection: 'row', width: '100%', marginTop: 12, gap: 10 }}>
+                <View style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '900' }}>{tickets.length}</Text>
                   <Text style={{ color: palette.subtext, fontSize: 12 }}>Tickets</Text>
                 </View>
-                <TouchableOpacity onPress={() => nav.navigate('Referrals')} style={{ alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>{profile.referrals?.length || 0}</Text>
+                <TouchableOpacity
+                  onPress={() => nav.navigate('Referrals')}
+                  style={{ flex: 1, alignItems: 'center', paddingVertical: 10, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
+                  activeOpacity={0.9}
+                >
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '900' }}>{profile.referrals?.length || 0}</Text>
                   <Text style={{ color: palette.subtext, fontSize: 12 }}>Referidos</Text>
                 </TouchableOpacity>
               </View>
 
-              {/* ACHIEVEMENTS */}
+              <Text style={[styles.muted, { textAlign: 'center', marginTop: 10 }]} numberOfLines={2}>
+                {isOrganizerRole
+                  ? 'Promociona tus rifas • Más alcance • Más ventas'
+                  : 'Compra segura • Participa y gana • Invita y suma beneficios'}
+              </Text>
+            </View>
+
+            <View style={[styles.card, styles.glassCard]}>
+              <Text style={[styles.muted, { textAlign: 'center' }]} numberOfLines={3}>
+                {profile.bio || 'Sin biografía.'}
+              </Text>
+
               {achievements.length > 0 && (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 20 }}>
-                  {achievements.map(a => (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginTop: 12 }}>
+                  {achievements.map((a) => (
                     <View key={a.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
                       <Ionicons name={a.icon} size={14} color="#fbbf24" />
                       <Text style={{ color: '#e2e8f0', fontSize: 12, marginLeft: 6, fontWeight: '600' }}>{a.label}</Text>
@@ -699,55 +742,30 @@ export default function ProfileScreen({ navigation, api, onUserUpdate, pushToken
                 </View>
               )}
 
-              {(!!profile.identityVerified || !!profile.verified) && (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10, marginTop: 8 }}>
-                  {!!profile.verified && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(59, 130, 246, 0.12)', borderWidth: 1, borderColor: 'rgba(59, 130, 246, 0.25)' }}>
-                      <Ionicons name="star-outline" size={16} color={palette.primary} />
-                      <Text style={{ color: palette.primary, fontWeight: 'bold' }}>Email verificado</Text>
-                    </View>
-                  )}
-
-                  {!!profile.identityVerified && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(251, 191, 36, 0.12)', borderWidth: 1, borderColor: 'rgba(251, 191, 36, 0.25)' }}>
-                      <Ionicons name="star" size={16} color="#fbbf24" />
-                      <Text style={{ color: '#fbbf24', fontWeight: 'bold' }}>KYC verificado</Text>
-                    </View>
-                  )}
+              {(profile.socials?.whatsapp || profile.socials?.instagram || profile.socials?.tiktok || profile.socials?.telegram) ? (
+                <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 16, marginTop: 14, flexWrap: 'wrap' }}>
+                  {profile.socials?.whatsapp ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://wa.me/${profile.socials.whatsapp}`)}>
+                      <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
+                    </TouchableOpacity>
+                  ) : null}
+                  {profile.socials?.instagram ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://instagram.com/${profile.socials.instagram.replace('@','')}`)}>
+                      <Ionicons name="logo-instagram" size={24} color="#E1306C" />
+                    </TouchableOpacity>
+                  ) : null}
+                  {profile.socials?.tiktok ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@','')}`)}>
+                      <Ionicons name="logo-tiktok" size={24} color="#e2e8f0" />
+                    </TouchableOpacity>
+                  ) : null}
+                  {profile.socials?.telegram ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@','')}`)}>
+                      <Ionicons name="paper-plane-outline" size={24} color="#60a5fa" />
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
-              )}
-
-              {(profile.securityId || profile.publicId) ? (
-                <Text style={[styles.muted, { textAlign: 'center', marginTop: 6 }]}>ID: {profile.securityId || profile.publicId}</Text>
               ) : null}
-              
-              <Text style={[styles.muted, { textAlign: 'center', marginTop: 8, paddingHorizontal: 20 }]}>
-                {profile.bio || 'Sin biografía.'}
-              </Text>
-
-              <View style={{ flexDirection: 'row', gap: 16, marginTop: 16 }}>
-                {profile.socials?.whatsapp ? (
-                  <TouchableOpacity onPress={() => Linking.openURL(`https://wa.me/${profile.socials.whatsapp}`)}>
-                    <Ionicons name="logo-whatsapp" size={24} color="#25D366" />
-                  </TouchableOpacity>
-                ) : null}
-                {profile.socials?.instagram ? (
-                  <TouchableOpacity onPress={() => Linking.openURL(`https://instagram.com/${profile.socials.instagram.replace('@','')}`)}>
-                    <Ionicons name="logo-instagram" size={24} color="#E1306C" />
-                  </TouchableOpacity>
-                ) : null}
-                {profile.socials?.tiktok ? (
-                  <TouchableOpacity onPress={() => Linking.openURL(`https://www.tiktok.com/@${String(profile.socials.tiktok).replace('@','')}`)}>
-                    <Ionicons name="logo-tiktok" size={24} color="#e2e8f0" />
-                  </TouchableOpacity>
-                ) : null}
-                {profile.socials?.telegram ? (
-                  <TouchableOpacity onPress={() => Linking.openURL(`https://t.me/${String(profile.socials.telegram).replace('@','')}`)}>
-                    <Ionicons name="paper-plane-outline" size={24} color="#60a5fa" />
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
             </View>
 
             {/* EDIT FORM */}
