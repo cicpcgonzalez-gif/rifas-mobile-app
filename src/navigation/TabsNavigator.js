@@ -25,6 +25,7 @@ export default function TabsNavigator({ api, user, onUserUpdate, modulesConfig, 
     <Tabs.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
+        unmountOnBlur: true,
         tabBarActiveTintColor: palette.primary,
         tabBarInactiveTintColor: palette.subtext,
         tabBarStyle: { backgroundColor: '#0f172a', borderTopColor: 'rgba(255,255,255,0.08)' },
