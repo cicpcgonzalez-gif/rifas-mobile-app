@@ -122,6 +122,8 @@ export default function AuthScreen({ onAuth }) {
     setShowDobPicker(true);
   };
 
+  const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
+
   const handleLogin = async () => {
     const errors = {};
     if (!form.email) errors.email = true;
@@ -132,10 +134,11 @@ export default function AuthScreen({ onAuth }) {
     setLoading(true);
     setError('');
     try {
+      const email = normalizeEmail(form.email);
       const res = await fetch(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: form.email, password: form.password })
+        body: JSON.stringify({ email, password: form.password })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -145,7 +148,7 @@ export default function AuthScreen({ onAuth }) {
 
       if (data.require2FA) {
         setTwofaNeeded(true);
-        setTwofaUserId(data.email);
+        setTwofaUserId(normalizeEmail(data.email || email));
         Alert.alert('Seguridad', 'Se ha enviado un código de seguridad a tu correo.');
         setLoading(false);
         return;
@@ -153,9 +156,9 @@ export default function AuthScreen({ onAuth }) {
 
       const token = data.token || data.accessToken;
       const refreshToken = data.refreshToken || token;
-      const fallbackName = String(form.email || '').split('@')[0] || 'Usuario';
+      const fallbackName = String(email || '').split('@')[0] || 'Usuario';
       const user = data.user || {
-        email: form.email,
+        email,
         name: fallbackName,
         role: 'user'
       };
@@ -187,10 +190,11 @@ export default function AuthScreen({ onAuth }) {
     setLoading(true);
     setError('');
     try {
+      const email = normalizeEmail(form.email);
       const res = await fetch(`${API_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form)
+        body: JSON.stringify({ ...form, email })
       });
       const data = await res.json();
       if (!res.ok) {
@@ -201,7 +205,7 @@ export default function AuthScreen({ onAuth }) {
       Alert.alert('Registro Exitoso', 'Por favor verifica tu correo electrónico para activar tu cuenta.');
       setMode('login');
       setShowVerification(true);
-      setVerifyEmail(form.email);
+      setVerifyEmail(email);
       
     } catch (err) {
       setError(err.message);
@@ -211,7 +215,8 @@ export default function AuthScreen({ onAuth }) {
 
 
   const handleVerify = async () => {
-    if (!verifyEmail || !verifyCode) {
+    const email = normalizeEmail(verifyEmail);
+    if (!email || !verifyCode) {
       setError('Ingresa tu email y el código.');
       return;
     }
@@ -222,7 +227,7 @@ export default function AuthScreen({ onAuth }) {
       const res = await fetch(`${API_URL}/verify-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: verifyEmail, code: verifyCode })
+        body: JSON.stringify({ email, code: verifyCode })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Código incorrecto');
@@ -237,7 +242,8 @@ export default function AuthScreen({ onAuth }) {
   };
 
   const handleResend = async () => {
-    if (!verifyEmail) {
+    const email = normalizeEmail(verifyEmail);
+    if (!email) {
       setError('Ingresa tu email para reenviar el código.');
       return;
     }
@@ -248,7 +254,7 @@ export default function AuthScreen({ onAuth }) {
       const res = await fetch(`${API_URL}/auth/verify/resend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: verifyEmail })
+        body: JSON.stringify({ email })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo reenviar');
@@ -260,7 +266,8 @@ export default function AuthScreen({ onAuth }) {
   };
 
   const handleRecovery = async () => {
-    if (!recoveryEmail) {
+    const email = normalizeEmail(recoveryEmail);
+    if (!email) {
       setError('Ingresa tu correo para recuperarlo.');
       return;
     }
@@ -271,7 +278,7 @@ export default function AuthScreen({ onAuth }) {
       const res = await fetch(`${API_URL}/auth/password/reset/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: recoveryEmail })
+        body: JSON.stringify({ email })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo enviar la recuperación');
@@ -283,14 +290,15 @@ export default function AuthScreen({ onAuth }) {
   };
 
   const verify2fa = async () => {
-    if (!twofaUserId || !twofaCode) return;
+    const email = normalizeEmail(twofaUserId);
+    if (!email || !twofaCode) return;
     setLoading(true);
     setError('');
     try {
       const res = await fetch(`${API_URL}/auth/2fa`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: twofaUserId, code: twofaCode })
+        body: JSON.stringify({ email, code: twofaCode })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Código incorrecto');
