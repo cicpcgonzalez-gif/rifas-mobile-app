@@ -202,10 +202,19 @@ export default function AuthScreen({ onAuth }) {
       }
       
       // Auto-login after register or show verification
-      Alert.alert('Registro Exitoso', 'Por favor verifica tu correo electrónico para activar tu cuenta.');
-      setMode('login');
-      setShowVerification(true);
-      setVerifyEmail(email);
+      const serverUser = data?.user;
+      const isVerified = serverUser?.verified === true;
+      if (isVerified) {
+        Alert.alert('Registro Exitoso', 'Ya puedes iniciar sesión.');
+        setMode('login');
+        setShowVerification(false);
+        setVerifyEmail(email);
+      } else {
+        Alert.alert('Registro Exitoso', 'Por favor verifica tu correo electrónico para activar tu cuenta.');
+        setMode('login');
+        setShowVerification(true);
+        setVerifyEmail(email);
+      }
       
     } catch (err) {
       setError(err.message);
