@@ -615,6 +615,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [actingId, setActingId] = useState(null);
   const [paymentFilters, setPaymentFilters] = useState({ raffleId: '', status: 'pending', reference: '' });
+  const [paymentRafflePickerVisible, setPaymentRafflePickerVisible] = useState(false);
   const [proofViewer, setProofViewer] = useState({ visible: false, uri: '' });
   const [proofImageLoading, setProofImageLoading] = useState(false);
   const [proofImageError, setProofImageError] = useState(false);
@@ -709,6 +710,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   useEffect(() => {
     if (activeSection === 'dashboard') loadMetrics();
   }, [activeSection, selectedRaffle?.id]);
+
+  useEffect(() => {
+    if (activeSection !== 'payments') return;
+    if (!api) return;
+    if (Array.isArray(raffles) && raffles.length) return;
+    loadRaffles();
+  }, [activeSection, api, raffles?.length, loadRaffles]);
 
   const deleteAccount = useCallback(() => {
     Alert.alert(
@@ -994,12 +1002,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setSecurityLoading(false);
   }, [api]);
 
-  const loadManualPayments = useCallback(async () => {
+  const loadManualPayments = useCallback(async (filtersOverride) => {
     setLoadingPayments(true);
+    const filters = filtersOverride && typeof filtersOverride === 'object' ? filtersOverride : paymentFilters;
     const params = new URLSearchParams();
-    if (paymentFilters.raffleId) params.append('raffleId', paymentFilters.raffleId.trim());
-    if (paymentFilters.status) params.append('status', paymentFilters.status.trim());
-    if (paymentFilters.reference) params.append('reference', paymentFilters.reference.trim());
+    if (filters.raffleId) params.append('raffleId', String(filters.raffleId).trim());
+    if (filters.status) params.append('status', String(filters.status).trim());
+    if (filters.reference) params.append('reference', String(filters.reference).trim());
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/manual-payments${query}`);
     if (res.ok) setPayments(Array.isArray(data) ? data : []);
@@ -1050,6 +1059,24 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         return new Date(bd || 0).getTime() - new Date(ad || 0).getTime();
       });
   }, [raffles]);
+
+  const activeRafflesForPayments = useMemo(() => {
+    const list = Array.isArray(raffles) ? raffles : [];
+    return list
+      .filter((r) => String(r?.status || '').toLowerCase() === 'active')
+      .sort((a, b) => {
+        const ad = a?.activatedAt || a?.createdAt;
+        const bd = b?.activatedAt || b?.createdAt;
+        return new Date(bd || 0).getTime() - new Date(ad || 0).getTime();
+      });
+  }, [raffles]);
+
+  const selectedPaymentRaffleLabel = useMemo(() => {
+    const id = String(paymentFilters?.raffleId || '').trim();
+    if (!id) return 'Todas las rifas activas';
+    const r = activeRafflesForPayments.find((x) => String(x?.id) === id);
+    return r ? `${r.title || 'Rifa'} (ID: ${r.id})` : `Rifa ID: ${id}`;
+  }, [paymentFilters?.raffleId, activeRafflesForPayments]);
 
   useEffect(() => {
     if (activeSection !== 'tickets') return;
@@ -3108,6 +3135,23 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           <Text style={{ color: palette.primary, textDecorationLine: 'underline', marginVertical: 4 }}>Ver Comprobante</Text>
                         </TouchableOpacity>
                       ) : null}
+                      {p.proof ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setProofImageLoading(true);
+                            setProofImageError(false);
+                            setProofViewer({ visible: true, uri: normalizeRemoteUri(p.proof) });
+                          }}
+                          activeOpacity={0.9}
+                          style={{ marginTop: 6, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
+                        >
+                          <Image
+                            source={{ uri: normalizeRemoteUri(p.proof) }}
+                            style={{ width: '100%', height: 120, backgroundColor: 'rgba(255,255,255,0.04)' }}
+                            resizeMode="cover"
+                          />
+                        </TouchableOpacity>
+                      ) : null}
                       {canAct ? (
                         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                           <TouchableOpacity
@@ -3149,8 +3193,34 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                     </View>
 
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 }}>
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="ID Rifa" value={paymentFilters.raffleId} onChangeText={(v) => setPaymentFilters(s => ({ ...s, raffleId: v }))} />
-                        <TextInput style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]} placeholder="Referencia" value={paymentFilters.reference} onChangeText={(v) => setPaymentFilters(s => ({ ...s, reference: v }))} />
+                        <TouchableOpacity
+                          onPress={() => setPaymentRafflePickerVisible(true)}
+                          style={[
+                            styles.input,
+                            {
+                              flexGrow: 1,
+                              flexBasis: '45%',
+                              marginBottom: 0,
+                              paddingVertical: 14,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between'
+                            }
+                          ]}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={{ color: paymentFilters.raffleId ? '#fff' : palette.muted, fontWeight: '700', flex: 1 }} numberOfLines={1}>
+                            {selectedPaymentRaffleLabel}
+                          </Text>
+                          <Ionicons name="chevron-down" size={18} color={palette.muted} />
+                        </TouchableOpacity>
+                        <TextInput
+                          style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]}
+                          placeholder="Referencia"
+                          placeholderTextColor={palette.muted}
+                          value={paymentFilters.reference}
+                          onChangeText={(v) => setPaymentFilters((s) => ({ ...s, reference: v }))}
+                        />
                     </View>
 
                     <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8 }}>
@@ -3175,7 +3245,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Filtrar</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
-                        onPress={() => { setPaymentFilters({ raffleId: '', status: 'pending', reference: '' }); setTimeout(loadManualPayments, 10); }}
+                        onPress={() => {
+                          const next = { raffleId: '', status: 'pending', reference: '' };
+                          setPaymentFilters(next);
+                          loadManualPayments(next);
+                        }}
                         style={{ flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', padding: 12, borderRadius: 12, alignItems: 'center' }}
                         >
                         <Text style={{ color: '#e2e8f0', fontWeight: '700' }}>Limpiar</Text>
@@ -4232,6 +4306,63 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               ) : (
                 <Text style={{ color: '#fff' }}>Sin comprobante</Text>
               )}
+            </View>
+          </Modal>
+
+          <Modal
+            visible={paymentRafflePickerVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setPaymentRafflePickerVisible(false)}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 16 }}>
+              <View style={{ backgroundColor: 'rgba(15, 23, 42, 0.96)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', padding: 14, maxHeight: '75%' }}>
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, marginBottom: 10 }}>Seleccionar rifa (activas)</Text>
+
+                <ScrollView>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const next = { ...paymentFilters, raffleId: '' };
+                      setPaymentFilters(next);
+                      loadManualPayments(next);
+                      setPaymentRafflePickerVisible(false);
+                    }}
+                    style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 8 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Todas las rifas activas</Text>
+                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>Quitar filtro por rifa</Text>
+                  </TouchableOpacity>
+
+                  {activeRafflesForPayments.length === 0 ? (
+                    <Text style={{ color: '#94a3b8', textAlign: 'center', marginTop: 10 }}>No hay rifas activas.</Text>
+                  ) : (
+                    activeRafflesForPayments.map((r, idx) => (
+                      <TouchableOpacity
+                        key={String(r?.id || idx)}
+                        onPress={() => {
+                          const next = { ...paymentFilters, raffleId: String(r.id) };
+                          setPaymentFilters(next);
+                          loadManualPayments(next);
+                          setPaymentRafflePickerVisible(false);
+                        }}
+                        style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: String(paymentFilters?.raffleId || '') === String(r?.id) ? palette.primary : 'rgba(255,255,255,0.08)', marginBottom: 8 }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{r?.title || 'Rifa'}</Text>
+                        <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={1}>ID: {r?.id}</Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setPaymentRafflePickerVisible(false)}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
           </Modal>
 
