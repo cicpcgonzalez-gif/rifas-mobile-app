@@ -22,6 +22,7 @@ import { useApi } from './hooks/useApi';
 import { ToastProvider } from './components/UI';
 import ConfettiOverlay from './components/ConfettiOverlay';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import WinnersTicker from './components/WinnersTicker';
 
 const Stack = createNativeStackNavigator();
 
@@ -219,6 +220,7 @@ function MainContent() {
                   {() => (
                     <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }}>
                       <View style={{ flex: 1 }}>
+                        <WinnersTicker api={api} enabled={!!accessToken} />
                         <TabsNavigator
                           api={api}
                           user={user}

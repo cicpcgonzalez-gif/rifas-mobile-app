@@ -184,7 +184,9 @@ export default function MyRafflesScreen({ api, navigation }) {
                 : prov || '—';
 
     const totalSpentRaw = item?.payment?.totalSpent;
-    const totalSpent = Number.isFinite(Number(totalSpentRaw)) ? Number(totalSpentRaw) : null;
+    const totalSpentNum = Number(totalSpentRaw);
+    const totalSpent = Number.isFinite(totalSpentNum) ? totalSpentNum : null;
+    const safeTotalSpent = totalSpent === 0 && totalPrice != null && totalPrice > 0 ? null : totalSpent;
     const motto = stableMottoForSeed(item?.serialNumber || `${raffle?.id || ''}-${serialShort}`);
     const canHide = isClosed && resultsPublished && !isWinner;
 
@@ -275,7 +277,7 @@ export default function MyRafflesScreen({ api, navigation }) {
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>TOTAL</Text>
               <Text style={{ color: '#0f172a', fontSize: 12, fontWeight: '900' }}>
-                {totalSpent != null ? formatMoney(totalSpent) : (totalPrice === null ? '—' : formatMoney(totalPrice))}
+                {safeTotalSpent != null ? formatMoney(safeTotalSpent) : (totalPrice === null ? '—' : formatMoney(totalPrice))}
               </Text>
             </View>
           </View>
@@ -291,7 +293,6 @@ export default function MyRafflesScreen({ api, navigation }) {
             </View>
 
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>Progreso</Text>
               <View style={{ width: 110, marginTop: 6 }}>
                 <ProgressBar progress={progress} color={isWinner ? '#fbbf24' : palette.accent} />
               </View>

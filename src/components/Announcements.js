@@ -10,6 +10,7 @@ export default function Announcements({ api, onShowProfile }) {
   const [loading, setLoading] = useState(false);
   const [reactingIds, setReactingIds] = useState(new Set());
   const [myReactions, setMyReactions] = useState({});
+  const [imageRatios, setImageRatios] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,7 +96,15 @@ export default function Announcements({ api, onShowProfile }) {
           {item.imageUrl && (
             <Image
               source={{ uri: item.imageUrl }}
-              style={{ width: '100%', height: 150, borderRadius: 8, marginBottom: 8, backgroundColor: '#000' }}
+              onLoad={(e) => {
+                const src = e?.nativeEvent?.source || {};
+                const iw = Number(src.width);
+                const ih = Number(src.height);
+                if (!iw || !ih) return;
+                const ratio = iw / ih;
+                setImageRatios((prev) => (prev[item.id] === ratio ? prev : { ...prev, [item.id]: ratio }));
+              }}
+              style={{ width: '100%', aspectRatio: imageRatios[item.id] || 16 / 9, borderRadius: 8, marginBottom: 8, backgroundColor: palette.surface }}
               resizeMode="contain"
             />
           )}
