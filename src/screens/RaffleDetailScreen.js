@@ -50,12 +50,30 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
   const [sellerPaymentMethods, setSellerPaymentMethods] = useState([]);
   const stats = current?.stats || {};
   const style = current?.style || {};
-  const safeGallery = Array.isArray(style?.gallery)
-    ? style.gallery.filter((uri) => typeof uri === 'string' && uri.trim().length > 0)
-    : [];
+  const normalizeUri = (v) => {
+    if (typeof v === 'string') return v.trim();
+    if (v && typeof v === 'object' && typeof v.uri === 'string') return v.uri.trim();
+    return '';
+  };
+
   const safeBannerImage = typeof style?.bannerImage === 'string' && style.bannerImage.trim().length > 0
-    ? style.bannerImage
+    ? style.bannerImage.trim()
     : null;
+
+  const rawGallery = Array.isArray(style?.gallery)
+    ? style.gallery
+    : Array.isArray(style?.galleryImages)
+    ? style.galleryImages
+    : Array.isArray(style?.images)
+    ? style.images
+    : [];
+
+  const safeGallery = rawGallery
+    .map(normalizeUri)
+    .filter(Boolean)
+    .filter((u, idx, arr) => arr.indexOf(u) === idx);
+
+  const media = [safeBannerImage, ...safeGallery].filter(Boolean).filter((u, idx, arr) => arr.indexOf(u) === idx);
   const themeColor = style?.themeColor || palette.primary;
   const [viewProfileId, setViewProfileId] = useState(null);
   const [termsVisible, setTermsVisible] = useState(false);
@@ -105,6 +123,8 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
       setQuantity(String(min));
     }
   }, [current, quantity]);
+
+  useEffect(() => {
     if (!api || !current?.id) return;
     api(`/raffles/${current.id}/payment-details`).then(({ res, data }) => {
       if (!res.ok) return;
@@ -411,10 +431,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
           </View>
         </Modal>
 
-        {safeGallery.length > 0 ? (
+        {media.length > 0 ? (
           <View style={{ height: 260, marginBottom: 16 }}>
             <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false}>
-              {safeGallery.map((img, index) => (
+              {media.map((img, index) => (
                 <View key={index} style={{ width: width - 32, height: 260, borderRadius: 12, overflow: 'hidden', marginRight: 0, backgroundColor: 'rgba(255,255,255,0.04)' }}>
                   <ImageBackground source={{ uri: img }} style={{ flex: 1 }} blurRadius={12}>
                     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
@@ -425,18 +445,10 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
               ))}
             </ScrollView>
             <View style={{ position: 'absolute', bottom: 10, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 6 }}>
-              {safeGallery.map((_, i) => (
+              {media.map((_, i) => (
                 <View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.5)' }} />
               ))}
             </View>
-          </View>
-        ) : safeBannerImage ? (
-          <View style={{ height: 220, marginBottom: 16, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.05)' }}>
-            <ImageBackground source={{ uri: safeBannerImage }} style={{ flex: 1 }} blurRadius={12}>
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
-                <Image source={{ uri: safeBannerImage }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
-              </View>
-            </ImageBackground>
           </View>
         ) : null}
         

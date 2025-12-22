@@ -79,6 +79,11 @@ const isSuperadminRole = (role) => {
   return normalized === 'superadmin' || normalized === 'super_admin' || normalized === 'super-admin';
 };
 
+const isSuperadminSectionId = (sectionId) => {
+  const id = String(sectionId || '').trim();
+  return id.startsWith('sa_');
+};
+
 const normalizeBoolean = (value) => {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.toLowerCase() === 'true';
@@ -312,11 +317,25 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [activeSection, setActiveSection] = useState(null);
   const isSuperadmin = isSuperadminRole(user?.role);
 
+  useEffect(() => {
+    if (isSuperadmin) return;
+    if (!activeSection) return;
+
+    if (isSuperadminSectionId(activeSection)) {
+      setActiveSection(null);
+      Alert.alert('Acceso restringido', 'Esta sección es exclusiva para Superadmin.');
+    }
+  }, [activeSection, isSuperadmin]);
+
   const normalizeDigits = useCallback((value) => String(value || '').replace(/\D/g, ''), []);
-  const normalizeLooseText = useCallback(
-    (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' '),
-    []
-  );
+
+  const formatReceiptDateTime = useCallback((value) => {
+    if (!value) return '—';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '—';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }, []);
   
   // Reports System
   const [legacyReports, setLegacyReports] = useState([]);
@@ -572,6 +591,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     if (isSuperadmin) {
       // Superadmin siempre ve los bloques críticos aunque el backend no mande config
       items.push({ id: 'sa_users', title: 'Usuarios', icon: 'people-outline', color: '#22d3ee', requiresSuperadmin: true });
+      items.push({ id: 'sa_manage_raffles', title: 'Administrar Rifas', icon: 'construct-outline', color: '#fb7185', requiresSuperadmin: true });
       items.push({ id: 'sa_tech_support', title: 'Soporte Técnico', icon: 'call-outline', color: '#38bdf8', requiresSuperadmin: true });
       items.push({ id: 'sa_smtp', title: 'Correo SMTP', icon: 'mail-outline', color: '#facc15', requiresSuperadmin: true });
       if (!modulesConfig || modulesConfig?.superadmin?.audit !== false) {
@@ -611,13 +631,31 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [boostingRaffleId, setBoostingRaffleId] = useState(null);
   const [activatingRaffleId, setActivatingRaffleId] = useState(null);
   const [tickets, setTickets] = useState([]);
-  const [verifierInput, setVerifierInput] = useState('');
   const [verifierResult, setVerifierResult] = useState(null);
   const [verifierLoading, setVerifierLoading] = useState(false);
   const [ticketsLoading, setTicketsLoading] = useState(false);
-  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '', from: '', to: '', number: '', serial: '' });
+  const [ticketFilters, setTicketFilters] = useState({ raffleId: '', status: '' });
   const [rafflePickerVisible, setRafflePickerVisible] = useState(false);
-  const [quickVerifierForm, setQuickVerifierForm] = useState({ cedula: '', firstName: '', lastName: '', phone: '', email: '' });
+  const [ticketVerifyType, setTicketVerifyType] = useState('serial'); // 'cedula' | 'name' | 'number' | 'serial'
+  const [ticketVerifyQuery, setTicketVerifyQuery] = useState('');
+
+  // Superadmin: seleccionar Admin -> luego seleccionar rifa activa
+  const [saActiveRafflesByAdmin, setSaActiveRafflesByAdmin] = useState([]);
+  const [saActiveRafflesLoading, setSaActiveRafflesLoading] = useState(false);
+  const [saAdminPickerVisible, setSaAdminPickerVisible] = useState(false);
+  const [saSelectedAdmin, setSaSelectedAdmin] = useState(null);
+
+  // Superadmin: módulo de administración global de rifas (buscar rifero -> rifas -> acciones)
+  const [saRiferoQuery, setSaRiferoQuery] = useState('');
+  const [saRiferoResults, setSaRiferoResults] = useState([]);
+  const [saRiferoLoading, setSaRiferoLoading] = useState(false);
+  const [saSelectedRifero, setSaSelectedRifero] = useState(null);
+  const [saRiferoRaffles, setSaRiferoRaffles] = useState([]);
+  const [saRiferoRafflesLoading, setSaRiferoRafflesLoading] = useState(false);
+  const [saSelectedRaffleControl, setSaSelectedRaffleControl] = useState(null);
+  const [saControlReason, setSaControlReason] = useState('');
+  const [saControlDetails, setSaControlDetails] = useState('');
+  const [saControlBusy, setSaControlBusy] = useState(false);
   const [raffleForm, setRaffleForm] = useState({ id: null, title: '', price: '', description: '', totalTickets: '', digits: 4, startDate: '', endDate: '', securityCode: '', lottery: '', instantWins: '', terms: '', minTickets: '', paymentMethods: ['mobile_payment'] });
   const [raffleErrors, setRaffleErrors] = useState({});
   const [savingRaffle, setSavingRaffle] = useState(false);
@@ -969,24 +1007,35 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   }, [api, paymentFilters]);
 
   const loadTickets = useCallback(async () => {
-    if (!isSuperadmin && !String(ticketFilters?.raffleId || '').trim()) {
-      Alert.alert('Selecciona una rifa', 'Para ver/gestionar tickets debes elegir una rifa.');
+    if (!String(ticketFilters?.raffleId || '').trim()) {
+      Alert.alert('Selecciona una rifa', 'La gestión/verificación de tickets es por rifa específica.');
       return;
     }
+
+    if (isSuperadmin) {
+      if (!saSelectedAdmin?.id) {
+        Alert.alert('Selecciona un admin', 'Primero elige el admin y luego la rifa activa que quieres verificar.');
+        return;
+      }
+      const allowed = (Array.isArray(saSelectedAdmin?.activeRaffles) ? saSelectedAdmin.activeRaffles : []).some(
+        (r) => String(r?.id) === String(ticketFilters?.raffleId)
+      );
+      if (!allowed) {
+        Alert.alert('Rifa inválida', 'Selecciona una rifa activa del admin seleccionado.');
+        return;
+      }
+    }
+
     setTicketsLoading(true);
     const params = new URLSearchParams();
     if (ticketFilters.raffleId) params.append('raffleId', ticketFilters.raffleId);
     if (ticketFilters.status) params.append('status', ticketFilters.status);
-    if (ticketFilters.from) params.append('from', ticketFilters.from);
-    if (ticketFilters.to) params.append('to', ticketFilters.to);
-    if (String(ticketFilters.number || '').trim()) params.append('number', String(ticketFilters.number).trim());
-    if (String(ticketFilters.serial || '').trim()) params.append('serial', String(ticketFilters.serial).trim());
     params.append('take', '200');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`);
     if (res.ok && Array.isArray(data)) setTickets(data.filter((t) => t && typeof t === 'object'));
     setTicketsLoading(false);
-  }, [api, ticketFilters, isSuperadmin]);
+  }, [api, ticketFilters, isSuperadmin, saSelectedAdmin?.id, saSelectedAdmin?.activeRaffles]);
 
   const activeRafflesForTickets = useMemo(() => {
     const list = Array.isArray(raffles) ? raffles : [];
@@ -1010,161 +1059,296 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setTicketFilters((s) => ({ ...s, raffleId: String(activeRafflesForTickets[0].id) }));
   }, [activeSection, isSuperadmin, ticketFilters?.raffleId, activeRafflesForTickets]);
 
+  const loadSuperadminActiveRaffles = useCallback(async () => {
+    if (!isSuperadmin) return;
+    setSaActiveRafflesLoading(true);
+    try {
+      const { res, data } = await api('/superadmin/admins/active-raffles');
+      if (res.ok && Array.isArray(data)) {
+        setSaActiveRafflesByAdmin(data.filter(Boolean));
+      } else {
+        setSaActiveRafflesByAdmin([]);
+      }
+    } catch (_e) {
+      setSaActiveRafflesByAdmin([]);
+    } finally {
+      setSaActiveRafflesLoading(false);
+    }
+  }, [api, isSuperadmin]);
+
+  useEffect(() => {
+    if (activeSection !== 'tickets') return;
+    if (!isSuperadmin) return;
+    loadSuperadminActiveRaffles();
+  }, [activeSection, isSuperadmin, loadSuperadminActiveRaffles]);
+
+  const saSearchRiferos = useCallback(async () => {
+    if (!isSuperadmin) return;
+    const q = String(saRiferoQuery || '').trim();
+    if (!q) {
+      setSaRiferoResults([]);
+      return;
+    }
+    setSaRiferoLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('q', q);
+      params.append('take', '20');
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const { res, data } = await api(`/superadmin/riferos/search${query}`);
+      if (res.ok && Array.isArray(data)) {
+        setSaRiferoResults(data.filter(Boolean));
+      } else {
+        setSaRiferoResults([]);
+      }
+    } catch (_e) {
+      setSaRiferoResults([]);
+    } finally {
+      setSaRiferoLoading(false);
+    }
+  }, [api, isSuperadmin, saRiferoQuery]);
+
+  const saLoadRiferoRaffles = useCallback(async (rifero, status = 'active') => {
+    if (!isSuperadmin) return;
+    if (!rifero?.id) return;
+    setSaRiferoRafflesLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('status', String(status || 'active'));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const { res, data } = await api(`/superadmin/riferos/${rifero.id}/raffles${query}`);
+      if (res.ok && data && typeof data === 'object') {
+        const rafflesList = Array.isArray(data.raffles) ? data.raffles : [];
+        const normalized = rafflesList.map(normalizeRaffle).filter(Boolean);
+        setSaRiferoRaffles(normalized);
+      } else {
+        setSaRiferoRaffles([]);
+      }
+    } catch (_e) {
+      setSaRiferoRaffles([]);
+    } finally {
+      setSaRiferoRafflesLoading(false);
+    }
+  }, [api, isSuperadmin]);
+
+  const saSelectRifero = useCallback(
+    (rifero) => {
+      setSaSelectedRifero(rifero || null);
+      setSaSelectedRaffleControl(null);
+      setSaControlReason('');
+      setSaControlDetails('');
+      setSaRiferoRaffles([]);
+      if (rifero?.id) saLoadRiferoRaffles(rifero, 'active');
+    },
+    [saLoadRiferoRaffles]
+  );
+
+  const saReportRaffle = useCallback(async (raffle) => {
+    if (!raffle?.id) return;
+    const reason = String(saControlReason || '').trim();
+    const details = String(saControlDetails || '').trim();
+    if (!reason) return Alert.alert('Falta motivo', 'Escribe un motivo antes de reportar.');
+
+    setSaControlBusy(true);
+    try {
+      const { res, data } = await api(`/superadmin/raffles/${raffle.id}/report`, {
+        method: 'POST',
+        body: JSON.stringify({ reason, details: details || null })
+      });
+      if (res.ok) {
+        Alert.alert('Listo', 'Reporte creado.');
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo crear el reporte.');
+      }
+    } catch (_e) {
+      Alert.alert('Error', 'Error de conexión al reportar la rifa.');
+    } finally {
+      setSaControlBusy(false);
+    }
+  }, [api, saControlReason, saControlDetails]);
+
+  const saCloseRaffle = useCallback(async (raffle) => {
+    if (!raffle?.id) return;
+    const reason = String(saControlReason || '').trim();
+    const details = String(saControlDetails || '').trim();
+    if (!reason) return Alert.alert('Falta motivo', 'Escribe un motivo antes de cerrar.');
+
+    const confirmed = await new Promise((resolve) => {
+      Alert.alert(
+        'Cerrar rifa',
+        'Esta acción cerrará la rifa y la sacará de circulación. ¿Deseas continuar?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Cerrar', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+
+    setSaControlBusy(true);
+    try {
+      const { res, data } = await api(`/superadmin/raffles/${raffle.id}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ reason, details: details || null })
+      });
+      if (res.ok) {
+        Alert.alert('Listo', data?.message || 'Rifa cerrada.');
+        if (saSelectedRifero?.id) await saLoadRiferoRaffles(saSelectedRifero, 'active');
+        loadRaffles();
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo cerrar la rifa.');
+      }
+    } catch (_e) {
+      Alert.alert('Error', 'Error de conexión al cerrar la rifa.');
+    } finally {
+      setSaControlBusy(false);
+    }
+  }, [api, saControlReason, saControlDetails, saSelectedRifero?.id, saLoadRiferoRaffles, loadRaffles]);
+
+  const saDeleteRaffle = useCallback(async (raffle) => {
+    if (!raffle?.id) return;
+    if (!isSuperadmin) return Alert.alert('Acceso denegado', 'Esta acción es exclusiva para Superadmin.');
+
+    const confirmed = await new Promise((resolve) => {
+      Alert.alert(
+        'Eliminar rifa',
+        'Esta acción eliminará la rifa y sus tickets asociados. No se puede deshacer. ¿Deseas continuar?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Eliminar', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+
+    setSaControlBusy(true);
+    try {
+      const { res, data } = await api(`/raffles/${raffle.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        Alert.alert('Eliminada', 'La rifa ha sido eliminada.');
+        if (saSelectedRifero?.id) await saLoadRiferoRaffles(saSelectedRifero, 'active');
+        loadRaffles();
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo eliminar.');
+      }
+    } catch (_e) {
+      Alert.alert('Error', 'Error de conexión al eliminar la rifa.');
+    } finally {
+      setSaControlBusy(false);
+    }
+  }, [api, isSuperadmin, saSelectedRifero?.id, saLoadRiferoRaffles, loadRaffles]);
+
+  const ticketRaffleOptions = useMemo(() => {
+    if (isSuperadmin) {
+      return Array.isArray(saSelectedAdmin?.activeRaffles) ? saSelectedAdmin.activeRaffles : [];
+    }
+    return activeRafflesForTickets;
+  }, [activeRafflesForTickets, isSuperadmin, saSelectedAdmin?.activeRaffles]);
+
   const selectedTicketRaffleLabel = useMemo(() => {
     const id = String(ticketFilters?.raffleId || '').trim();
-    if (!id) return 'Todas las rifas activas';
-    const found = activeRafflesForTickets.find((r) => String(r?.id) === id);
+    if (!id) return 'Selecciona una rifa';
+    const found = ticketRaffleOptions.find((r) => String(r?.id) === id);
     if (!found) return `Rifa #${id}`;
     const title = String(found.title || '').trim();
     return title ? `${title} (#${found.id})` : `Rifa #${found.id}`;
-  }, [ticketFilters?.raffleId, activeRafflesForTickets]);
+  }, [ticketFilters?.raffleId, ticketRaffleOptions]);
 
-  const allowedTicketRaffleIds = useMemo(() => {
+  const allowedActiveTicketRaffleIds = useMemo(() => {
     const ids = new Set();
-    (Array.isArray(raffles) ? raffles : []).forEach((r) => {
+    (Array.isArray(activeRafflesForTickets) ? activeRafflesForTickets : []).forEach((r) => {
       if (r?.id != null) ids.add(String(r.id));
     });
     return ids;
-  }, [raffles]);
+  }, [activeRafflesForTickets]);
 
-  const getTicketSerial = useCallback((ticket) => {
-    const t = ticket && typeof ticket === 'object' ? ticket : {};
-    return t.serial || t.serialNumber || t.ticketSerial || t.id || '';
-  }, []);
-
-  const verifyQuickIdentity = useCallback(async () => {
+  const verifyTicketByOneField = useCallback(async () => {
     const raffleId = String(ticketFilters?.raffleId || '').trim();
     if (!raffleId) {
-      Alert.alert('Selecciona una rifa', 'El verificador requiere una rifa específica.');
+      Alert.alert('Selecciona una rifa', 'La verificación es por rifa específica.');
       return;
     }
 
-    if (!isSuperadmin && !allowedTicketRaffleIds.has(raffleId)) {
-      Alert.alert('Acceso denegado', 'Solo puedes verificar tickets de tus propias rifas.');
+    if (!isSuperadmin && !allowedActiveTicketRaffleIds.has(raffleId)) {
+      Alert.alert('Acceso denegado', 'Solo puedes verificar tickets de tus rifas activas.');
       return;
     }
 
-    const cedula = normalizeDigits(quickVerifierForm.cedula);
-    const phone = normalizeDigits(quickVerifierForm.phone);
-    const email = normalizeLooseText(quickVerifierForm.email);
-    const firstName = normalizeLooseText(quickVerifierForm.firstName);
-    const lastName = normalizeLooseText(quickVerifierForm.lastName);
+    if (isSuperadmin) {
+      if (!saSelectedAdmin?.id) {
+        Alert.alert('Selecciona un admin', 'Primero elige el admin y luego la rifa activa.');
+        return;
+      }
+      const allowed = (Array.isArray(saSelectedAdmin?.activeRaffles) ? saSelectedAdmin.activeRaffles : []).some(
+        (r) => String(r?.id) === raffleId
+      );
+      if (!allowed) {
+        Alert.alert('Rifa inválida', 'Selecciona una rifa activa del admin seleccionado.');
+        return;
+      }
+    }
 
-    const hasAny = Boolean(cedula || phone || email || firstName || lastName);
-    if (!hasAny) {
-      Alert.alert('Completa un dato', 'Ingresa cédula, nombres, teléfono o email para verificar.');
+    const raw = String(ticketVerifyQuery || '').trim();
+    if (!raw) {
+      Alert.alert('Ingresa un dato', 'Con uno solo (Cédula, Nombre, Ticket # o Serial) basta.');
       return;
+    }
+
+    const params = new URLSearchParams();
+    params.append('raffleId', raffleId);
+
+    if (ticketVerifyType === 'cedula') {
+      const cedula = normalizeDigits(raw);
+      if (!cedula) {
+        Alert.alert('Dato inválido', 'Ingresa una cédula válida.');
+        return;
+      }
+      params.append('cedula', cedula);
+    } else if (ticketVerifyType === 'number') {
+      const num = normalizeDigits(raw);
+      if (!num) {
+        Alert.alert('Dato inválido', 'Ingresa un número de ticket válido.');
+        return;
+      }
+      params.append('number', num);
+    } else if (ticketVerifyType === 'name') {
+      const name = String(raw).trim();
+      if (!name) {
+        Alert.alert('Dato inválido', 'Ingresa un nombre válido.');
+        return;
+      }
+      params.append('name', name);
+    } else {
+      // serial
+      params.append('serial', raw);
     }
 
     setVerifierLoading(true);
     setVerifierResult(null);
-
     try {
-      const params = new URLSearchParams();
-      params.append('raffleId', raffleId);
-      if (cedula) params.append('cedula', cedula);
-      if (phone) params.append('phone', phone);
-      if (email) params.append('email', email);
-      params.append('take', '500');
       const query = params.toString() ? `?${params.toString()}` : '';
-      const { res, data } = await api(`/admin/tickets${query}`);
-
-      if (!res.ok || !Array.isArray(data)) {
+      const { res, data } = await api(`/admin/tickets/verify${query}`);
+      if (res.ok && data?.valid && Array.isArray(data?.matches) && data.matches.length) {
+        setVerifierResult({ status: 'found', matches: data.matches });
+      } else {
         setVerifierResult({ status: 'not_found', matches: [] });
-        return;
       }
-
-      const safeTickets = data.filter((t) => t && typeof t === 'object');
-
-      const matches = safeTickets.filter((t) => {
-        const buyer = t?.buyer || t?.user || {};
-        const bCedula = normalizeDigits(buyer.cedula || buyer.phone || buyer.document || t.cedula);
-        const bPhone = normalizeDigits(buyer.phone || t.phone);
-        const bEmail = normalizeLooseText(buyer.email || t.email);
-        const bFirst = normalizeLooseText(buyer.firstName || buyer.name);
-        const bLast = normalizeLooseText(buyer.lastName);
-
-        if (cedula && bCedula !== cedula) return false;
-        if (phone && bPhone !== phone) return false;
-        if (email && bEmail !== email) return false;
-        if (firstName && (!bFirst || bFirst !== firstName)) return false;
-        if (lastName && (!bLast || bLast !== lastName)) return false;
-        return true;
-      });
-
-      if (matches.length) setVerifierResult({ status: 'found', matches });
-      else setVerifierResult({ status: 'not_found', matches: [] });
     } catch (_e) {
       setVerifierResult({ status: 'not_found', matches: [] });
     } finally {
       setVerifierLoading(false);
     }
   }, [
+    allowedActiveTicketRaffleIds,
     api,
-    ticketFilters?.raffleId,
-    allowedTicketRaffleIds,
     isSuperadmin,
-    quickVerifierForm,
     normalizeDigits,
-    normalizeLooseText
+    saSelectedAdmin?.activeRaffles,
+    saSelectedAdmin?.id,
+    ticketFilters?.raffleId,
+    ticketVerifyQuery,
+    ticketVerifyType
   ]);
-
-  const verifyQuickTicket = useCallback(async () => {
-    const input = String(verifierInput || '').trim();
-    if (!input) return;
-
-    setVerifierLoading(true);
-    setVerifierResult(null);
-
-    try {
-      // 1) Verificación remota (soporta serial, número, email, cédula, nombre)
-      const { res, data } = await api(`/admin/verify-ticket/${encodeURIComponent(input)}?take=200`);
-      if (res.ok && data?.valid) {
-        const matches = Array.isArray(data?.matches)
-          ? data.matches
-          : data?.ticket
-            ? [data.ticket]
-            : [];
-        if (matches.length) {
-          setVerifierResult({ status: 'found', matches });
-          return;
-        }
-      }
-
-      // 2) Fallback: si el input es número, intentar encontrarlo en la lista cargada.
-      const localFound = tickets.find(
-        (t) => String(t.number) === input || String(t.serialNumber) === input
-      );
-
-      if (localFound) {
-        // Si tenemos serial, volvemos a consultar para obtener comprador desencriptado.
-        const serial = localFound.serialNumber;
-        if (serial) {
-          const remote = await api(`/admin/verify-ticket/${encodeURIComponent(String(serial))}?take=200`);
-          if (remote.res.ok && remote.data?.valid) {
-            const matches = Array.isArray(remote.data?.matches)
-              ? remote.data.matches
-              : remote.data?.ticket
-                ? [remote.data.ticket]
-                : [];
-            if (matches.length) {
-              setVerifierResult({ status: 'found', matches });
-              return;
-            }
-          }
-        }
-
-        setVerifierResult({ status: 'found', matches: [localFound] });
-        return;
-      }
-
-      setVerifierResult({ status: 'not_found' });
-    } catch (e) {
-      setVerifierResult({ status: 'not_found' });
-    } finally {
-      setVerifierLoading(false);
-    }
-  }, [api, tickets, verifierInput]);
 
   const loadSuperAdminData = useCallback(async () => {
     // Load Tech Support for everyone (Admins need to see it too)
@@ -1414,9 +1598,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       safeLoad(loadSecurityStatus);
       safeLoad(loadManualPayments);
       safeLoad(loadRaffles);
-      safeLoad(loadTickets);
       safeLoad(loadSuperAdminData);
-    }, [loadProfile, loadSecurityStatus, loadManualPayments, loadRaffles, loadTickets, loadSuperAdminData])
+    }, [loadProfile, loadSecurityStatus, loadManualPayments, loadRaffles, loadSuperAdminData])
   );
 
   const saveSupport = async () => {
@@ -1476,14 +1659,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   };
 
   const exportTickets = async () => {
+    if (!String(ticketFilters?.raffleId || '').trim()) {
+      Alert.alert('Selecciona una rifa', 'La exportación de tickets es por rifa específica.');
+      return;
+    }
     setTicketsLoading(true);
     const params = new URLSearchParams();
     if (ticketFilters.raffleId) params.append('raffleId', ticketFilters.raffleId);
     if (ticketFilters.status) params.append('status', ticketFilters.status);
-    if (ticketFilters.from) params.append('from', ticketFilters.from);
-    if (ticketFilters.to) params.append('to', ticketFilters.to);
-    if (String(ticketFilters.number || '').trim()) params.append('number', String(ticketFilters.number).trim());
-    if (String(ticketFilters.serial || '').trim()) params.append('serial', String(ticketFilters.serial).trim());
     params.append('format', 'csv');
     const query = params.toString() ? `?${params.toString()}` : '';
     const { res, data } = await api(`/admin/tickets${query}`, { method: 'GET', headers: { Accept: 'text/csv' } }, false);
@@ -1596,21 +1779,35 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     galleryAssetsRef.current = [];
     const stylePaymentMethods = normalizePaymentMethods(raffle?.style?.paymentMethods);
     const directPaymentMethods = normalizePaymentMethods(raffle?.paymentMethods);
+    const styleSafe = raffle?.style && typeof raffle.style === 'object' ? raffle.style : {};
     setRaffleForm({
       id: raffle.id,
       title: raffle.title || '',
-      price: String(raffle.price || ''),
-      description: raffle.description || '',
+      price: String((raffle.ticketPrice ?? raffle.price) ?? ''),
+      description: String((raffle.prize ?? raffle.description) ?? ''),
       totalTickets: raffle.totalTickets ? String(raffle.totalTickets) : '',
-      digits: raffle.digits || 4,
-      startDate: raffle.startDate ? raffle.startDate.slice(0, 10) : '',
-      endDate: raffle.endDate ? raffle.endDate.slice(0, 10) : '',
+      digits: Number(styleSafe?.digits ?? raffle.digits ?? 4) || 4,
+      startDate: (styleSafe?.startDate || raffle.startDate) ? String(styleSafe?.startDate || raffle.startDate).slice(0, 10) : '',
+      endDate: (styleSafe?.endDate || raffle.endDate) ? String(styleSafe?.endDate || raffle.endDate).slice(0, 10) : '',
       lottery: raffle.lottery || '',
-      instantWins: raffle.instantWins ? raffle.instantWins.join(', ') : '',
+      securityCode: String(styleSafe?.securityCode ?? raffle.securityCode ?? ''),
+      instantWins: Array.isArray(styleSafe?.instantWins)
+        ? styleSafe.instantWins.join(', ')
+        : raffle.instantWins ? raffle.instantWins.join(', ') : '',
       terms: raffle.terms || '',
-      minTickets: String(raffle.minTickets || '1'),
+      minTickets: String(styleSafe?.minTickets ?? raffle.minTickets ?? '1'),
       paymentMethods: directPaymentMethods.length ? directPaymentMethods : (stylePaymentMethods.length ? stylePaymentMethods : ['mobile_payment'])
     });
+  };
+
+  const saOpenRaffleInEditor = (raffle) => {
+    if (!raffle) return;
+    try {
+      editRaffle(raffle);
+      setActiveSection('raffles');
+    } catch (_e) {
+      Alert.alert('Error', 'No se pudo abrir la rifa en el editor.');
+    }
   };
 
   useEffect(() => {
@@ -1684,46 +1881,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       return Alert.alert('Faltan imágenes', 'Debes subir al menos 1 imagen antes de publicar la rifa.');
     }
     
-      quickNotify('Guardando rifa...');
-
-     const paymentMethods = normalizePaymentMethods(raffleForm.paymentMethods);
-     if (paymentMethods.includes('mobile_payment')) {
-       await api('/me', { method: 'PATCH', body: JSON.stringify({ bankDetails: bankSettings }) });
-    }
-
-    const instantWinsArray = raffleForm.instantWins 
-      ? raffleForm.instantWins.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n))
-      : [];
-
-    const createPayload = {
-      title: raffleForm.title,
-      price: Number(raffleForm.price),
-      description: raffleForm.description,
-      totalTickets: raffleForm.totalTickets ? Number(raffleForm.totalTickets) : undefined,
-      digits: raffleForm.digits,
-      startDate: raffleForm.startDate,
-      endDate: raffleForm.endDate,
-      securityCode: raffleForm.securityCode,
-      lottery: raffleForm.lottery,
-      instantWins: instantWinsArray,
-      terms: raffleForm.terms,
-      minTickets: Number(raffleForm.minTickets) || 1,
-      paymentMethods
-    };
-
-    const updatePayload = {
-      title: raffleForm.title,
-      prize: raffleForm.description,
-      ticketPrice: Number(raffleForm.price),
-      totalTickets: raffleForm.totalTickets ? Number(raffleForm.totalTickets) : undefined,
-      lottery: raffleForm.lottery,
-      terms: raffleForm.terms || null
-    };
-
-    const payload = isCreate ? createPayload : updatePayload;
-
     if (isCreate) {
-      const confirmed = await new Promise(resolve => {
+      const confirmed = await new Promise((resolve) => {
         Alert.alert(
           'Confirmar publicación',
           'Una vez publicada, no podrás eliminar la rifa (solo cerrarla). ¿Deseas continuar?',
@@ -1737,10 +1896,53 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     }
 
     setSavingRaffle(true);
-    // Crear: el backend usa POST /raffles. Editar: PATCH /admin/raffles/:id
-    const endpoint = isCreate ? '/raffles' : `/admin/raffles/${raffleForm.id}`;
-    const method = isCreate ? 'POST' : 'PATCH';
-    const { res, data } = await api(endpoint, { method, body: JSON.stringify(payload) });
+    try {
+      quickNotify('Guardando rifa...');
+
+      const paymentMethods = normalizePaymentMethods(raffleForm.paymentMethods);
+      if (paymentMethods.includes('mobile_payment')) {
+        try {
+          await api('/me', { method: 'PATCH', body: JSON.stringify({ bankDetails: bankSettings }) });
+        } catch (_e) {
+          // No bloquear la publicación si el guardado de banco falla.
+        }
+      }
+
+      const instantWinsArray = raffleForm.instantWins
+        ? raffleForm.instantWins.split(',').map((n) => parseInt(n.trim(), 10)).filter((n) => !Number.isNaN(n))
+        : [];
+
+      const createPayload = {
+        title: raffleForm.title,
+        price: Number(raffleForm.price),
+        description: raffleForm.description,
+        totalTickets: raffleForm.totalTickets ? Number(raffleForm.totalTickets) : undefined,
+        digits: raffleForm.digits,
+        startDate: raffleForm.startDate,
+        endDate: raffleForm.endDate,
+        securityCode: raffleForm.securityCode,
+        lottery: raffleForm.lottery,
+        instantWins: instantWinsArray,
+        terms: raffleForm.terms,
+        minTickets: Number(raffleForm.minTickets) || 1,
+        paymentMethods
+      };
+
+      const updatePayload = {
+        title: raffleForm.title,
+        prize: raffleForm.description,
+        ticketPrice: Number(raffleForm.price),
+        totalTickets: raffleForm.totalTickets ? Number(raffleForm.totalTickets) : undefined,
+        lottery: raffleForm.lottery,
+        terms: raffleForm.terms || null
+      };
+
+      const payload = isCreate ? createPayload : updatePayload;
+
+      // Crear: el backend usa POST /raffles. Editar: PATCH /admin/raffles/:id
+      const endpoint = isCreate ? '/raffles' : `/admin/raffles/${raffleForm.id}`;
+      const method = isCreate ? 'POST' : 'PATCH';
+      const { res, data } = await api(endpoint, { method, body: JSON.stringify(payload) });
     
     if (res.ok) {
       // Save style if we have style data
@@ -1896,7 +2098,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         Alert.alert('Ups', data?.error || 'No se pudo guardar.');
       }
     }
-    setSavingRaffle(false);
+    } catch (e) {
+      console.log('submitRaffle error:', e);
+      Alert.alert('Error', e?.message || 'Error de conexión al guardar la rifa.');
+    } finally {
+      setSavingRaffle(false);
+    }
   };
 
   const validateRaffleForPreview = () => {
@@ -2180,6 +2387,23 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               </TouchableOpacity>
             )}
           </View>
+
+          {!isSuperadmin && isSuperadminSectionId(activeSection) ? (
+            <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <TouchableOpacity
+                  onPress={() => setActiveSection(null)}
+                  style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '800' }}>Volver</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.card}>
+                <Text style={[styles.title, { marginBottom: 8 }]}>Acceso restringido</Text>
+                <Text style={styles.muted}>Esta sección es exclusiva para Superadmin.</Text>
+              </View>
+            </View>
+          ) : null}
 
         {/* Nota: la vista antigua activeSection === 'reports' se mantiene en una sola instancia arriba.
             El acceso principal para superadmin es 'sa_reports' (Denuncias y reportes). */}
@@ -2470,222 +2694,240 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                     const buyer = t.buyer || t.user || {};
                     const raffleDigits = raffles.find(r => r.id === t.raffleId)?.digits;
                     const statusColor = t.status === 'approved' || t.status === 'aprobado' ? '#4ade80' : t.status === 'ganador' ? '#fbbf24' : t.status === 'rejected' ? '#f87171' : '#fbbf24';
+                    const raffleTitle = String(t.raffleTitle || '').trim() || (String(t.raffleId || '').trim() ? `Rifa #${t.raffleId}` : 'Rifa');
+                    const serial = String(t.serialNumber || t.serial || t.ticketSerial || t.id || '').trim() || '—';
+                    const numberLabel = `#${formatTicketNumber(t.number ?? '0', raffleDigits)}`;
+                    const whenLabel = formatReceiptDateTime(t.createdAt);
+                    const statusUpper = String(t.status || '—').toUpperCase();
                     return (
-                      <View style={{ marginBottom: 10, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 12 }}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16 }}>#{formatTicketNumber(t.number ?? '0', raffleDigits)}</Text>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 10, borderWidth: 1, borderColor: statusColor }}>
+                      <View style={{ marginBottom: 12, backgroundColor: 'rgba(255,255,255,0.06)', padding: 12, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <View style={{ flex: 1, paddingRight: 10 }}>
+                            <Text style={{ color: '#fff', fontWeight: '900', letterSpacing: 1 }}>MEGARIFAS</Text>
+                            <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{raffleTitle}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: statusColor, backgroundColor: 'rgba(255,255,255,0.04)' }}>
                             <Ionicons name={t.status === 'approved' ? 'checkmark-circle' : t.status === 'rejected' ? 'close-circle' : 'time-outline'} size={14} color={statusColor} />
-                            <Text style={{ color: statusColor, fontWeight: '700', marginLeft: 6 }}>{t.status}</Text>
+                            <Text style={{ color: statusColor, fontWeight: '900', marginLeft: 6, fontSize: 11 }}>{statusUpper}</Text>
                           </View>
                         </View>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12, marginTop: 2 }}>Rifa: {t.raffleTitle || t.raffleId}</Text>
-                        <Text style={{ color: '#cbd5e1', fontSize: 12 }}>Referencia: {t.reference || '—'}</Text>
-                        <View style={{ marginTop: 6 }}>
-                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>Comprador</Text>
-                          <Text style={{ color: '#fff', fontWeight: '700' }}>{buyer.firstName || buyer.name || t.user?.name || 'Usuario'} {buyer.lastName || ''}</Text>
-                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || t.user?.email || '—'}</Text>
-                          <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.phone || buyer.cedula || '—'}</Text>
+
+                        <View style={{ marginTop: 12, alignItems: 'center' }}>
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>NÚMERO DE TICKET</Text>
+                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 22, marginTop: 2 }}>{numberLabel}</Text>
+                          {t.status === 'ganador' && winnerInfo?.ticket === (t.number || t.ticketNumber) ? (
+                            <Text style={{ color: '#fbbf24', fontWeight: '900', marginTop: 6 }}>Ganador anunciado</Text>
+                          ) : null}
                         </View>
-                        <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Fecha: {t.createdAt ? new Date(t.createdAt).toLocaleString() : '—'}</Text>
-                        {t.status === 'ganador' && winnerInfo?.ticket === (t.number || t.ticketNumber) ? (
-                          <Text style={{ color: '#fbbf24', fontWeight: '700', marginTop: 4 }}>Ganador anunciado</Text>
-                        ) : null}
+
+                        <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.10)' }}>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>Serial</Text>
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', flex: 1, textAlign: 'right' }} numberOfLines={1}>{serial}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>Fecha/Hora</Text>
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', flex: 1, textAlign: 'right' }} numberOfLines={1}>{whenLabel}</Text>
+                          </View>
+                          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>Referencia</Text>
+                            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', flex: 1, textAlign: 'right' }} numberOfLines={1}>{String(t.reference || '—')}</Text>
+                          </View>
+                        </View>
+
+                        <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.10)' }}>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>COMPRADOR</Text>
+                          <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', marginTop: 8 }} numberOfLines={1}>
+                            {buyer.firstName || buyer.name || t.user?.name || 'Usuario'} {buyer.lastName || ''}
+                          </Text>
+                          <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 4 }} numberOfLines={1}>{buyer.email || t.user?.email || '—'}</Text>
+                          <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 4 }} numberOfLines={1}>{buyer.phone || buyer.cedula || '—'}</Text>
+                        </View>
                       </View>
                     );
                 }}
                 ListHeaderComponent={
                   <>
-                    {/* VERIFICADOR RÁPIDO */}
-                    <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: 16, borderRadius: 16, marginBottom: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
-                        <Text style={{ color: '#fbbf24', fontWeight: 'bold', fontSize: 16, marginBottom: 6 }}>Verificador rápido</Text>
-                        <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 10 }}>Coincidencias 100% exactas por identidad (requiere rifa).</Text>
+                    {/* VERIFICACIÓN POR RIFA (1 SOLO DATO) */}
+                    <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: 16, borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+                      <Text style={{ color: '#fbbf24', fontWeight: '900', fontSize: 16, marginBottom: 6 }}>Verificación de Tickets</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 12 }}>
+                        Requiere rifa activa. Busca por Cédula, Nombre, Ticket # o Serial (1 solo dato).
+                      </Text>
 
+                      {isSuperadmin ? (
                         <TouchableOpacity
-                          onPress={() => setRafflePickerVisible(true)}
-                          style={[
-                            styles.input,
-                            {
-                              marginBottom: 10,
-                              justifyContent: 'center'
-                            }
-                          ]}
+                          onPress={() => setSaAdminPickerVisible(true)}
+                          style={[styles.input, { marginBottom: 10, justifyContent: 'center' }]}
                         >
-                          <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Rifa (obligatoria)</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Admin (obligatorio)</Text>
                           <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>
-                            {selectedTicketRaffleLabel}
+                            {saSelectedAdmin?.name || saSelectedAdmin?.email || 'Selecciona un admin con rifas activas'}
                           </Text>
                         </TouchableOpacity>
+                      ) : null}
 
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                          <TextInput
-                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            placeholder="Cédula"
-                            value={quickVerifierForm.cedula}
-                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, cedula: v }))}
-                            keyboardType="numeric"
-                          />
-                          <TextInput
-                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            placeholder="Teléfono"
-                            value={quickVerifierForm.phone}
-                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, phone: v }))}
-                            keyboardType="phone-pad"
-                          />
-                        </View>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (isSuperadmin && !saSelectedAdmin?.id) {
+                            Alert.alert('Selecciona un admin', 'Primero elige el admin y luego la rifa activa.');
+                            return;
+                          }
+                          setRafflePickerVisible(true);
+                        }}
+                        style={[styles.input, { marginBottom: 12, justifyContent: 'center' }]}
+                      >
+                        <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Rifa (obligatoria)</Text>
+                        <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>{selectedTicketRaffleLabel}</Text>
+                      </TouchableOpacity>
 
-                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                          <TextInput
-                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            placeholder="Nombres"
-                            value={quickVerifierForm.firstName}
-                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, firstName: v }))}
-                          />
-                          <TextInput
-                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            placeholder="Apellidos"
-                            value={quickVerifierForm.lastName}
-                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, lastName: v }))}
-                          />
-                        </View>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                        {[
+                          { id: 'cedula', label: 'Cédula' },
+                          { id: 'name', label: 'Nombre' },
+                          { id: 'number', label: 'Ticket #' },
+                          { id: 'serial', label: 'Serial' }
+                        ].map((opt) => {
+                          const active = ticketVerifyType === opt.id;
+                          return (
+                            <TouchableOpacity
+                              key={opt.id}
+                              onPress={() => setTicketVerifyType(opt.id)}
+                              style={{
+                                paddingVertical: 8,
+                                paddingHorizontal: 12,
+                                borderRadius: 999,
+                                backgroundColor: active ? 'rgba(96,165,250,0.15)' : 'rgba(255,255,255,0.06)',
+                                borderWidth: 1,
+                                borderColor: active ? '#60a5fa' : 'rgba(255,255,255,0.10)'
+                              }}
+                            >
+                              <Text style={{ color: '#e2e8f0', fontWeight: active ? '900' : '700', fontSize: 12 }}>{opt.label}</Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
 
-                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-                          <TextInput
-                            style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                            placeholder="Email"
-                            value={quickVerifierForm.email}
-                            onChangeText={(v) => setQuickVerifierForm((s) => ({ ...s, email: v }))}
-                            autoCapitalize="none"
-                          />
-                          <TouchableOpacity
-                            onPress={verifyQuickIdentity}
-                            disabled={verifierLoading}
-                            style={{ backgroundColor: palette.primary, paddingHorizontal: 18, justifyContent: 'center', borderRadius: 12, opacity: verifierLoading ? 0.7 : 1 }}
-                          >
-                            {verifierLoading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900' }}>Verificar</Text>}
-                          </TouchableOpacity>
-                        </View>
-                        
-                        {verifierResult && (
-                        <View style={{ marginTop: 12, padding: 12, borderRadius: 12, backgroundColor: verifierResult.status === 'found' ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: verifierResult.status === 'found' ? '#4ade80' : '#f87171' }}>
-                            {verifierResult.status === 'found' ? (
+                      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                        <TextInput
+                          style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                          placeholder={
+                            ticketVerifyType === 'cedula'
+                              ? 'Ej: 12345678'
+                              : ticketVerifyType === 'number'
+                                ? 'Ej: 1050'
+                                : ticketVerifyType === 'name'
+                                  ? 'Ej: Juan Pérez'
+                                  : 'Ej: 2c1a... (serial)'
+                          }
+                          value={ticketVerifyQuery}
+                          onChangeText={setTicketVerifyQuery}
+                          autoCapitalize={ticketVerifyType === 'name' ? 'words' : 'none'}
+                          keyboardType={ticketVerifyType === 'cedula' || ticketVerifyType === 'number' ? 'numeric' : 'default'}
+                        />
+                        <TouchableOpacity
+                          onPress={verifyTicketByOneField}
+                          disabled={verifierLoading}
+                          style={{ backgroundColor: palette.primary, paddingHorizontal: 18, height: 48, justifyContent: 'center', borderRadius: 12, opacity: verifierLoading ? 0.7 : 1 }}
+                        >
+                          {verifierLoading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '900' }}>Verificar</Text>}
+                        </TouchableOpacity>
+                      </View>
+
+                      {verifierResult ? (
+                        <View style={{ marginTop: 12 }}>
+                          {verifierResult.status === 'found' ? (
                             <>
-                                <Text style={{ color: '#4ade80', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>¡COINCIDENCIAS ENCONTRADAS!</Text>
-                                <Text style={{ color: '#cbd5e1', textAlign: 'center', marginTop: 4, fontSize: 12 }}>
-                                  {Array.isArray(verifierResult.matches) ? verifierResult.matches.length : 1} resultado(s)
-                                </Text>
+                              <Text style={{ color: '#4ade80', fontWeight: '900', textAlign: 'center' }}>
+                                Ticket(s) encontrado(s): {Array.isArray(verifierResult.matches) ? verifierResult.matches.length : 0}
+                              </Text>
+                              <View style={{ marginTop: 10, gap: 10 }}>
+                                {(Array.isArray(verifierResult.matches) ? verifierResult.matches : []).map((t, idx) => {
+                                  const raffle = t?.raffle || {};
+                                  const seller = t?.seller || {};
+                                  const buyer = t?.buyer || {};
+                                  const digits = raffle?.digits;
+                                  const serial = String(t?.serialNumber || t?.serial || t?.ticketSerial || t?.id || '').trim() || '—';
+                                  const numberLabel = t?.number != null ? `#${formatTicketNumber(t.number, digits)}` : '—';
+                                  const whenLabel = formatReceiptDateTime(t?.createdAt);
+                                  const statusLabel = String(t?.status || '').trim() || '—';
+                                  const sellerName = seller?.name || seller?.email || '—';
+                                  const sellerId = seller?.securityIdLast8 ? ` (${seller.securityIdLast8})` : '';
+                                  const buyerName = buyer?.name || '—';
+                                  const buyerEmail = buyer?.email || '—';
+                                  const buyerPhone = buyer?.phone || buyer?.cedula || '—';
+                                  const signature = t?.receiptSignature || '—';
+                                  const raffleTitle = String(raffle?.title || 'Rifa').trim() || 'Rifa';
+                                  const raffleIdLabel = raffle?.id != null ? `#${raffle.id}` : '';
+                                  const statusUpper = String(statusLabel || '').toUpperCase();
 
-                                <View style={{ marginTop: 10, gap: 10 }}>
-                                  {(Array.isArray(verifierResult.matches) ? verifierResult.matches : []).map((t, idx) => {
-                                    const buyer = t?.buyer || t?.user || {};
-                                    const seller = t?.seller || {};
-                                    const buyerName = buyer.firstName || buyer.name || t.holder || 'Desconocido';
-                                    const buyerEmail = buyer.email || '—';
-                                    const buyerPhone = buyer.phone || buyer.cedula || '—';
-                                    const raffleTitle = t.raffle?.title || t.raffle || t.raffleTitle || '—';
-                                    const sellerName = seller.name || seller.email || '—';
-                                    const createdAt = t.createdAt ? new Date(t.createdAt).toLocaleString() : '—';
-                                    const serial = getTicketSerial(t) || '—';
-                                    const numLabel = t.number != null ? `#${formatTicketNumber(t.number)}` : '—';
+                                  const Row = ({ label, value }) => (
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                                      <Text style={{ color: '#94a3b8', fontSize: 12, flexShrink: 0 }}>{label}</Text>
+                                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', flex: 1, textAlign: 'right' }} numberOfLines={1}>
+                                        {value}
+                                      </Text>
+                                    </View>
+                                  );
 
-                                    return (
-                                      <View key={`${serial}-${idx}`} style={{ padding: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
-                                        <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>{numLabel}</Text>
-                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 2 }}>Serial: {serial}</Text>
-                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Fecha/Hora: {createdAt}</Text>
-                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Rifa: {raffleTitle}</Text>
-                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center' }}>Vendedor: {sellerName}</Text>
-                                        <View style={{ marginTop: 8 }}>
-                                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>Comprador</Text>
-                                          <Text style={{ color: '#fff', textAlign: 'center', marginTop: 2 }}>{buyerName}</Text>
-                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Email: {buyerEmail}</Text>
-                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Tel/Cédula: {buyerPhone}</Text>
-                                          <Text style={{ color: '#cbd5e1', textAlign: 'center', fontSize: 12 }}>Estado: {(t.status || 'unknown').toUpperCase()}</Text>
+                                  return (
+                                    <View key={`${serial}-${idx}`} style={{ padding: 12, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <View style={{ flex: 1, paddingRight: 10 }}>
+                                          <Text style={{ color: '#fff', fontWeight: '900', letterSpacing: 1 }}>MEGARIFAS</Text>
+                                          <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 2 }} numberOfLines={1}>
+                                            {raffleTitle}{raffleIdLabel ? ` (${raffleIdLabel})` : ''}
+                                          </Text>
+                                        </View>
+                                        <View style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}>
+                                          <Text style={{ color: '#e2e8f0', fontWeight: '900', fontSize: 11 }}>{statusUpper}</Text>
                                         </View>
                                       </View>
-                                    );
-                                  })}
-                                </View>
+
+                                      <View style={{ marginTop: 12, alignItems: 'center' }}>
+                                        <Text style={{ color: '#94a3b8', fontSize: 12 }}>NÚMERO DE TICKET</Text>
+                                        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 22, marginTop: 2 }}>{numberLabel}</Text>
+                                      </View>
+
+                                      <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.10)' }}>
+                                        <Row label="Serial" value={serial} />
+                                        <Row label="Fecha/Hora" value={whenLabel} />
+                                        <Row label="Vendedor" value={`${sellerName}${sellerId}`} />
+                                        <Row label="Firma" value={signature} />
+                                      </View>
+
+                                      <View style={{ marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.10)' }}>
+                                        <Text style={{ color: '#94a3b8', fontSize: 12, fontWeight: '900', textAlign: 'center' }}>COMPRADOR</Text>
+                                        <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center', marginTop: 8 }} numberOfLines={1}>{buyerName}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 4 }} numberOfLines={1}>{buyerEmail}</Text>
+                                        <Text style={{ color: '#cbd5e1', fontSize: 12, textAlign: 'center', marginTop: 4 }} numberOfLines={1}>{buyerPhone}</Text>
+                                      </View>
+
+                                      <Text style={{ color: '#94a3b8', fontSize: 11, textAlign: 'center', marginTop: 12 }}>
+                                        Comprobante de verificación (copia fiel del ticket).
+                                      </Text>
+                                    </View>
+                                  );
+                                })}
+                              </View>
                             </>
-                            ) : (
-                            <Text style={{ color: '#f87171', fontWeight: 'bold', fontSize: 18, textAlign: 'center' }}>NO ENCONTRADO</Text>
-                            )}
+                          ) : (
+                            <View style={{ marginTop: 8, padding: 12, borderRadius: 12, backgroundColor: 'rgba(248,113,113,0.2)', borderWidth: 1, borderColor: '#f87171' }}>
+                              <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>No se encontraron coincidencias</Text>
+                            </View>
+                          )}
                         </View>
-                        )}
-                    </View>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                        <TouchableOpacity
-                          onPress={() => setRafflePickerVisible(true)}
-                          style={[
-                            styles.input,
-                            {
-                              flexGrow: 1,
-                              flexBasis: '45%',
-                              marginBottom: 0,
-                              justifyContent: 'center'
-                            }
-                          ]}
-                        >
-                          <Text style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4 }}>Rifa (activa)</Text>
-                          <Text style={{ color: '#fff', fontWeight: '800' }} numberOfLines={1}>
-                            {selectedTicketRaffleLabel}
-                          </Text>
-                        </TouchableOpacity>
-
-                        {isSuperadmin ? (
-                          <TouchableOpacity
-                            onPress={loadTickets}
-                            style={[
-                              styles.input,
-                              {
-                                flexGrow: 1,
-                                flexBasis: '45%',
-                                marginBottom: 0,
-                                justifyContent: 'center',
-                                alignItems: 'center'
-                              }
-                            ]}
-                          >
-                            <Text style={{ color: '#fff', fontWeight: '800' }}>Verificar</Text>
-                          </TouchableOpacity>
-                        ) : null}
-
-                        <TextInput
-                          style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]}
-                          placeholder="Ticket #"
-                          value={ticketFilters.number}
-                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, number: v }))}
-                          keyboardType="numeric"
-                        />
-                        <TextInput
-                          style={[styles.input, { flexGrow: 1, flexBasis: '45%', marginBottom: 0 }]}
-                          placeholder="Serial"
-                          value={ticketFilters.serial}
-                          onChangeText={(v) => setTicketFilters((s) => ({ ...s, serial: v }))}
-                          autoCapitalize="none"
-                        />
+                      ) : null}
                     </View>
 
                     <Modal visible={rafflePickerVisible} transparent animationType="fade">
                       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 16 }}>
                         <View style={{ backgroundColor: '#0b1224', borderRadius: 16, padding: 14, maxHeight: '80%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
                           <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center' }}>Selecciona una rifa activa</Text>
-                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>Esto llena el filtro automáticamente</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>La verificación/lista es por rifa</Text>
 
                           <ScrollView style={{ marginTop: 12 }}>
-                            {isSuperadmin ? (
-                              <TouchableOpacity
-                                onPress={() => {
-                                  setTicketFilters((s) => ({ ...s, raffleId: '' }));
-                                  setRafflePickerVisible(false);
-                                }}
-                                style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 10 }}
-                              >
-                                <Text style={{ color: '#fff', fontWeight: '800', textAlign: 'center' }}>Todas las rifas activas</Text>
-                              </TouchableOpacity>
-                            ) : null}
-
-                            {activeRafflesForTickets.map((r) => (
+                            {(ticketRaffleOptions || []).map((r) => (
                               <TouchableOpacity
                                 key={String(r.id)}
                                 onPress={() => {
@@ -2699,9 +2941,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                               </TouchableOpacity>
                             ))}
 
-                            {!activeRafflesForTickets.length ? (
+                            {(!ticketRaffleOptions || ticketRaffleOptions.length === 0) ? (
                               <View style={{ paddingVertical: 18 }}>
-                                <Text style={{ color: '#94a3b8', textAlign: 'center' }}>No hay rifas activas para mostrar.</Text>
+                                <Text style={{ color: '#94a3b8', textAlign: 'center' }}>
+                                  {isSuperadmin && !saSelectedAdmin?.id
+                                    ? 'Selecciona un admin para ver sus rifas activas.'
+                                    : 'No hay rifas activas para mostrar.'}
+                                </Text>
                               </View>
                             ) : null}
                           </ScrollView>
@@ -2709,6 +2955,57 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                           <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
                             <TouchableOpacity
                               onPress={() => setRafflePickerVisible(false)}
+                              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
+                            >
+                              <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+                    </Modal>
+
+                    <Modal visible={saAdminPickerVisible} transparent animationType="fade">
+                      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 16 }}>
+                        <View style={{ backgroundColor: '#0b1224', borderRadius: 16, padding: 14, maxHeight: '80%', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+                          <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center' }}>Selecciona un admin</Text>
+                          <Text style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', marginTop: 6 }}>Solo admins con rifas activas</Text>
+
+                          {saActiveRafflesLoading ? (
+                            <View style={{ marginTop: 14 }}>
+                              <ActivityIndicator color={palette.primary} />
+                            </View>
+                          ) : (
+                            <ScrollView style={{ marginTop: 12 }}>
+                              {(Array.isArray(saActiveRafflesByAdmin) ? saActiveRafflesByAdmin : []).map((a) => (
+                                <TouchableOpacity
+                                  key={String(a?.id)}
+                                  onPress={() => {
+                                    setSaSelectedAdmin(a);
+                                    setTicketFilters((s) => ({ ...s, raffleId: '' }));
+                                    setVerifierResult(null);
+                                    setTicketVerifyQuery('');
+                                    setSaAdminPickerVisible(false);
+                                  }}
+                                  style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', marginBottom: 10 }}
+                                >
+                                  <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>{a?.name || a?.email || `Admin #${a?.id}`}</Text>
+                                  <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 6 }} numberOfLines={1}>
+                                    {a?.email || '—'} • {Array.isArray(a?.activeRaffles) ? a.activeRaffles.length : 0} rifa(s)
+                                  </Text>
+                                </TouchableOpacity>
+                              ))}
+
+                              {(Array.isArray(saActiveRafflesByAdmin) ? saActiveRafflesByAdmin : []).length === 0 ? (
+                                <View style={{ paddingVertical: 18 }}>
+                                  <Text style={{ color: '#94a3b8', textAlign: 'center' }}>No hay admins con rifas activas.</Text>
+                                </View>
+                              ) : null}
+                            </ScrollView>
+                          )}
+
+                          <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+                            <TouchableOpacity
+                              onPress={() => setSaAdminPickerVisible(false)}
                               style={{ flex: 1, paddingVertical: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}
                             >
                               <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
@@ -2738,17 +3035,13 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
                     <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
                         <TouchableOpacity onPress={loadTickets} style={{ flex: 1, backgroundColor: palette.primary, padding: 12, borderRadius: 12, alignItems: 'center' }}>
-                        <Text style={{ color: '#fff', fontWeight: '700' }}>Verificar</Text>
+                        <Text style={{ color: '#fff', fontWeight: '700' }}>Cargar lista</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                         onPress={() => {
                           setTicketFilters((s) => ({
                             raffleId: isSuperadmin ? '' : String(s?.raffleId || ''),
                             status: '',
-                            from: '',
-                            to: '',
-                            number: '',
-                            serial: ''
                           }));
                           setTimeout(loadTickets, 10);
                         }}
@@ -2759,7 +3052,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                     </View>
 
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                        <Text style={styles.section}>Resultados ({tickets.length})</Text>
+                      <Text style={styles.section}>Tickets ({tickets.length})</Text>
                         <TouchableOpacity onPress={exportTickets}>
                         <Text style={{ color: palette.primary, fontWeight: 'bold' }}>Exportar CSV</Text>
                         </TouchableOpacity>
@@ -3049,8 +3342,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       key={item.id}
                       style={{ width: '48%', backgroundColor: 'rgba(255,255,255,0.05)', padding: 16, borderRadius: 12, marginBottom: 8, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}
                       onPress={() => {
-                        if (item.requiresSuperadmin && !isSuperadmin) {
-                          Alert.alert('Solo Superadmin', 'Necesitas permisos de superadmin para esta sección.');
+                        const isSa = isSuperadminSectionId(item.id);
+                        if ((!isSuperadmin && isSa) || (item.requiresSuperadmin && !isSuperadmin)) {
+                          Alert.alert('Acceso restringido', 'Esta sección es exclusiva para Superadmin.');
                           return;
                         }
                         setActiveSection(item.id);
@@ -3776,7 +4070,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       >
                         <Text style={{ color: palette.muted, fontSize: 12 }}>Ticket: Bs. {r?.price || r?.ticketPrice || 0} • Cierre: {r?.endDate ? r.endDate.split('T')[0] : '—'}</Text>
                         {r?.style?.bannerImage ? (
-                          <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 10, marginTop: 10 }} resizeMode="cover" />
+                          <Image source={{ uri: r.style.bannerImage }} style={{ width: '100%', height: 140, borderRadius: 10, marginTop: 10, backgroundColor: '#000' }} resizeMode="contain" />
                         ) : null}
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
                           <Text style={{ color: '#cbd5e1' }}>Vendidos: {sold}/{total}</Text>
@@ -4044,6 +4338,153 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   <Text style={{ color: palette.muted, fontSize: 10 }}>{new Date(log.timestamp).toLocaleString()}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {activeSection === 'sa_manage_raffles' && (
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                  <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Administrar Rifas (Superadmin)</Text>
+              </View>
+
+              <Text style={styles.muted}>Busca al rifero (email, publicId, securityId o nombre) y gestiona sus rifas activas.</Text>
+
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Buscar rifero (email / nombre / publicId)"
+                  value={saRiferoQuery}
+                  onChangeText={setSaRiferoQuery}
+                  autoCapitalize="none"
+                  onSubmitEditing={saSearchRiferos}
+                  returnKeyType="search"
+                />
+                <TouchableOpacity
+                  onPress={saSearchRiferos}
+                  disabled={saRiferoLoading}
+                  style={{ paddingHorizontal: 14, borderRadius: 10, backgroundColor: 'rgba(59,130,246,0.18)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.35)', justifyContent: 'center', opacity: saRiferoLoading ? 0.6 : 1 }}
+                >
+                  <Text style={{ color: '#bfdbfe', fontWeight: '900' }}>{saRiferoLoading ? '...' : 'Buscar'}</Text>
+                </TouchableOpacity>
+              </View>
+
+              {saRiferoResults?.length ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={[styles.section, { marginTop: 0 }]}>Resultados</Text>
+                  {saRiferoResults.map((u) => (
+                    <TouchableOpacity
+                      key={u.id}
+                      onPress={() => saSelectRifero(u)}
+                      style={{ backgroundColor: saSelectedRifero?.id === u.id ? 'rgba(34,197,94,0.10)' : 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginTop: 8, borderWidth: 1, borderColor: saSelectedRifero?.id === u.id ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.08)' }}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>{u.name || 'Sin nombre'}</Text>
+                      <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={1}>{u.email || '—'}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12 }} numberOfLines={1}>publicId: {u.publicId || '—'}{u.securityId ? ` | securityId: ${u.securityId}` : ''}</Text>
+                      <Text style={{ color: '#94a3b8', fontSize: 12, marginTop: 6 }}>Rifas activas: {Number(u.activeRafflesCount || 0)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              {saSelectedRifero ? (
+                <View style={{ marginTop: 14 }}>
+                  <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 12 }}>
+                    <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={1}>Rifero seleccionado: {saSelectedRifero?.name || '—'}</Text>
+                    <Text style={{ color: '#cbd5e1', fontSize: 12 }} numberOfLines={1}>{saSelectedRifero?.email || '—'}</Text>
+                  </View>
+
+                  <Text style={styles.section}>Motivo (obligatorio para cerrar/reportar)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Ej: Infracción, error de datos, incumplimiento..."
+                    value={saControlReason}
+                    onChangeText={setSaControlReason}
+                  />
+
+                  <Text style={styles.section}>Detalle (opcional)</Text>
+                  <TextInput
+                    style={[styles.input, { height: 90, textAlignVertical: 'top' }]}
+                    multiline
+                    placeholder="Describe el caso con más detalle"
+                    value={saControlDetails}
+                    onChangeText={setSaControlDetails}
+                  />
+
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                    <Text style={{ color: '#94a3b8', fontSize: 12 }}>Rifas activas del rifero</Text>
+                    <TouchableOpacity
+                      onPress={() => saLoadRiferoRaffles(saSelectedRifero, 'active')}
+                      disabled={saRiferoRafflesLoading}
+                      style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', opacity: saRiferoRafflesLoading ? 0.6 : 1 }}
+                    >
+                      <Text style={{ color: '#fff', fontWeight: '800' }}>Refrescar</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {saRiferoRafflesLoading ? (
+                    <View style={{ paddingVertical: 14, alignItems: 'center' }}>
+                      <ActivityIndicator color={palette.primary} />
+                      <Text style={[styles.muted, { marginTop: 10 }]}>Cargando rifas...</Text>
+                    </View>
+                  ) : (saRiferoRaffles?.length ? (
+                    saRiferoRaffles.map((r) => (
+                      <View key={r.id} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginTop: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <View style={{ flex: 1, paddingRight: 10 }}>
+                            <Text style={{ color: '#fff', fontWeight: '900' }} numberOfLines={2}>{r.title || 'Rifa'}</Text>
+                            <Text style={{ color: '#94a3b8', fontSize: 12 }}>ID: {r.id} | Estado: {String(r.status || '').toUpperCase()}</Text>
+                            {r.soldTickets != null ? (
+                              <Text style={{ color: '#94a3b8', fontSize: 12 }}>Vendidos: {Number(r.soldTickets || 0)}</Text>
+                            ) : null}
+                          </View>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+                          <TouchableOpacity
+                            onPress={() => saOpenRaffleInEditor(r)}
+                            style={{ flex: 1, backgroundColor: 'rgba(59,130,246,0.18)', borderWidth: 1, borderColor: 'rgba(59,130,246,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: '#bfdbfe', fontWeight: '900' }}>Abrir editor</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => { setSaSelectedRaffleControl(r); saReportRaffle(r); }}
+                            disabled={saControlBusy}
+                            style={{ flex: 1, backgroundColor: 'rgba(251,113,133,0.18)', borderWidth: 1, borderColor: 'rgba(251,113,133,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: saControlBusy ? 0.6 : 1 }}
+                          >
+                            <Text style={{ color: '#fecaca', fontWeight: '900' }}>Reportar</Text>
+                          </TouchableOpacity>
+                        </View>
+
+                        <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                          <TouchableOpacity
+                            onPress={() => { setSaSelectedRaffleControl(r); saCloseRaffle(r); }}
+                            disabled={saControlBusy}
+                            style={{ flex: 1, backgroundColor: 'rgba(245,158,11,0.18)', borderWidth: 1, borderColor: 'rgba(245,158,11,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: saControlBusy ? 0.6 : 1 }}
+                          >
+                            <Text style={{ color: '#fde68a', fontWeight: '900' }}>Cerrar</Text>
+                          </TouchableOpacity>
+
+                          <TouchableOpacity
+                            onPress={() => { setSaSelectedRaffleControl(r); saDeleteRaffle(r); }}
+                            disabled={saControlBusy}
+                            style={{ flex: 1, backgroundColor: 'rgba(239,68,68,0.18)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.35)', paddingVertical: 10, borderRadius: 10, alignItems: 'center', opacity: saControlBusy ? 0.6 : 1 }}
+                          >
+                            <Text style={{ color: '#fecaca', fontWeight: '900' }}>Eliminar</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ))
+                  ) : (
+                    <View style={{ padding: 20, alignItems: 'center' }}>
+                      <Ionicons name="pricetag-outline" size={48} color={palette.muted} />
+                      <Text style={{ color: palette.muted, marginTop: 12 }}>No hay rifas activas para este rifero.</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
             </View>
           )}
 

@@ -280,7 +280,7 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
                   if (walletBalance === null) refreshWalletBalance();
                 }}
                 onPressNotifications={scrollToAnnouncements}
-                onPressProfile={() => navigation.navigate('Perfil')}
+                onPressProfile={() => (navigation.getParent?.() ? navigation.getParent().navigate('Perfil') : navigation.navigate('Perfil'))}
               />
               <View style={{ alignItems: 'center', marginTop: 10 }}>
                 <Text style={{ fontSize: 18, fontWeight: '900', color: '#fff', letterSpacing: 0.6 }}>MEGA RIFAS</Text>
@@ -412,11 +412,24 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
             const currentReaction = myReactions[item.id] || null;
             const reacting = reactingIds.has(item.id);
             
-            const gallery = Array.isArray(item.style?.gallery) && item.style.gallery.length
-              ? item.style.gallery
-              : item.style?.bannerImage
-              ? [item.style.bannerImage]
+            const normalizeUri = (v) => {
+              if (typeof v === 'string') return v.trim();
+              if (v && typeof v === 'object' && typeof v.uri === 'string') return v.uri.trim();
+              return '';
+            };
+
+            const style = (item?.style && typeof item.style === 'object') ? item.style : {};
+            const banner = normalizeUri(style.bannerImage || style.banner || item?.bannerImage);
+            const rawGallery = Array.isArray(style.gallery)
+              ? style.gallery
+              : Array.isArray(style.galleryImages)
+              ? style.galleryImages
+              : Array.isArray(style.images)
+              ? style.images
               : [];
+
+            const galleryUris = rawGallery.map(normalizeUri).filter(Boolean);
+            const gallery = [banner, ...galleryUris].filter(Boolean).filter((u, idx, arr) => arr.indexOf(u) === idx);
 
             const userBoostActive = !!item?.user?.isBoosted;
             const userBoostEndsAt = item?.user?.boostEndsAt ? Date.parse(item.user.boostEndsAt) : 0;
