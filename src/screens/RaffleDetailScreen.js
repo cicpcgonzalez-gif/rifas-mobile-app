@@ -35,7 +35,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
   // Local state to hold the raffle data, initialized with param but updatable
   const [current, setCurrent] = useState(raffle || {});
-  const [quantity, setQuantity] = useState(String(getMinTickets(raffle || {})));
+  const [quantity, setQuantity] = useState('');
   const [buying, setBuying] = useState(false);
   const [manualRef, setManualRef] = useState('');
   const [manualNote, setManualNote] = useState('');
@@ -117,11 +117,11 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
 
   // Asegura que la cantidad nunca quede por debajo del mínimo del rifero
   useEffect(() => {
+    if (!String(quantity).trim()) return;
     const min = getMinTickets(current);
     const qty = Number(quantity);
-    if (!Number.isFinite(qty) || qty < min) {
-      setQuantity(String(min));
-    }
+    if (!Number.isFinite(qty) || qty <= 0) return;
+    if (qty < min) setQuantity(String(min));
   }, [current, quantity]);
 
   useEffect(() => {
@@ -291,6 +291,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     if (isClosed) return Alert.alert('Rifa cerrada', 'Esta rifa ya culminó y no permite compras.');
     if (isAgotada) return Alert.alert('Rifa agotada', 'Esta rifa ya no tiene números disponibles para la venta.');
     const min = getMinTickets(current);
+    if (!String(quantity).trim()) return Alert.alert('Cantidad requerida', `Selecciona una cantidad (mínimo ${min}).`);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
     if (qty < min) return Alert.alert('Cantidad invalida', `La compra mínima para esta rifa es ${min}.`);
@@ -331,6 +332,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
     if (isClosed) return Alert.alert('Rifa cerrada', 'Esta rifa ya culminó y no permite pagos.');
     if (isAgotada) return Alert.alert('Rifa agotada', 'Esta rifa ya no tiene números disponibles para la venta.');
     const min = getMinTickets(current);
+    if (!String(quantity).trim()) return Alert.alert('Cantidad requerida', `Selecciona una cantidad (mínimo ${min}).`);
     const qty = Number(quantity);
     if (Number.isNaN(qty) || qty <= 0) return Alert.alert('Cantidad invalida', 'Ingresa una cantidad mayor a 0.');
     if (qty < min) return Alert.alert('Cantidad invalida', `La compra mínima para esta rifa es ${min}.`);
@@ -562,11 +564,15 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
             <TextInput
             style={[styles.input, playDisabled ? { opacity: 0.6 } : null]}
             value={quantity}
-            onChangeText={setQuantity}
+            onChangeText={(t) => setQuantity(String(t || '').replace(/[^0-9]/g, ''))}
             keyboardType="numeric"
-            placeholder="Cantidad (Aleatoria)"
+            placeholder={`Cantidad (mínimo ${getMinTickets(current)})`}
+            placeholderTextColor={palette.muted}
             editable={!playDisabled}
             />
+            <Text style={[styles.muted, { marginTop: 2, fontSize: 12 }]}>
+              Tu compra será de mínimo {getMinTickets(current)} números en adelante (ej: {getMinTickets(current)}, {getMinTickets(current) + 1}, {getMinTickets(current) + 10}).
+            </Text>
           </View>
 
           {(!style.paymentMethods || style.paymentMethods.includes('wallet')) && (
@@ -761,7 +767,7 @@ export default function RaffleDetailScreen({ route, navigation, api }) {
               </Text>
               {manualProof?.uri ? <Image source={{ uri: manualProof.uri }} style={styles.proofImage} /> : <Text style={styles.muted}>Aún no has seleccionado imagen.</Text>}
               <Text style={styles.muted}>
-                Método: {manualProvider || '—'} · Cantidad: {quantity} · Ref: {manualRef || '—'}
+                Método: {manualProvider || '—'} · Cantidad: {String(quantity).trim() ? quantity : '—'} · Ref: {manualRef || '—'}
               </Text>
               <FilledButton
                 title={manualLoading ? 'Enviando...' : 'Enviar comprobante'}
