@@ -83,9 +83,9 @@ export function useApi(accessToken, refreshToken, persistTokens) {
               continue;
             }
             break;
-          } catch (err) {
+            } catch (err) {
             const isAbort = String(err?.name || '').toLowerCase() === 'aborterror';
-            if (attempt < maxRetries && (isAbort || true)) {
+            if (attempt < maxRetries && isAbort) {
               await sleep(attempt === 0 ? 350 : 900);
               continue;
             }
