@@ -24,6 +24,7 @@ import { formatMoneyVES } from '../utils';
 import Announcements from '../components/Announcements';
 import PublicProfileModal from '../components/PublicProfileModal';
 import { FilledButton } from '../components/UI';
+import { useFloatingFab } from '../context/floatingFab';
 
 const BendecidosStrip = ({ numbers, digits }) => {
   const opacity = useRef(new Animated.Value(1)).current;
@@ -142,6 +143,8 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   const [helpVisible, setHelpVisible] = useState(false);
   const [filter, setFilter] = useState('all');
 
+  const { setWhatsAppFabHidden } = useFloatingFab();
+
   const [postMenuVisible, setPostMenuVisible] = useState(false);
   const [postMenuRaffle, setPostMenuRaffle] = useState(null);
 
@@ -152,6 +155,12 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
   useEffect(() => {
     myReactionsRef.current = myReactions;
   }, [myReactions]);
+
+  useEffect(() => {
+    const shouldHide = !!viewProfileId || supportVisible || helpVisible || walletQuickVisible || postMenuVisible;
+    setWhatsAppFabHidden(shouldHide);
+    return () => setWhatsAppFabHidden(false);
+  }, [viewProfileId, supportVisible, helpVisible, walletQuickVisible, postMenuVisible, setWhatsAppFabHidden]);
 
   const shareRaffle = async (raffle) => {
     try {
@@ -182,6 +191,14 @@ export default function RafflesHomeScreen({ navigation, api, user }) {
         return true;
       });
       setRaffles(visible);
+
+      // Hidratar reacción del usuario (persistente) si el backend la envía
+      const nextMy = {};
+      for (const r of visible) {
+        const t = String(r?.myReaction || '').toUpperCase();
+        if (t === 'LIKE' || t === 'HEART') nextMy[r.id] = t;
+      }
+      setMyReactions(nextMy);
     }
 
     // Load Wallet (para mostrar saldo en el TopBar)

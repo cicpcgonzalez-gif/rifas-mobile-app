@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { View, Text, ActivityIndicator, TouchableOpacity, Linking } from 'react-native';
+import { View, Text, ActivityIndicator, TouchableOpacity, Linking, Keyboard, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
@@ -9,6 +9,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
+import * as Sentry from 'sentry-expo';
 
 import { palette } from './theme';
 import { styles } from './styles';
@@ -23,6 +24,9 @@ import { ToastProvider } from './components/UI';
 import ConfettiOverlay from './components/ConfettiOverlay';
 import AppErrorBoundary from './components/AppErrorBoundary';
 import WinnersTicker from './components/WinnersTicker';
+import { FloatingFabProvider, useFloatingFab } from './context/floatingFab';
+
+import { initAnalytics, logScreenView, setAnalyticsUser } from './services/analytics';
 
 const Stack = createNativeStackNavigator();
 
@@ -45,6 +49,14 @@ const SECURE_KEYS = {
 
 const getProjectId = () => Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId || null;
 
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false
+  })
+});
+
 const setSecureItem = async (key, value) => {
   if (!value) return SecureStore.deleteItemAsync(key);
   return SecureStore.setItemAsync(key, value);
@@ -63,6 +75,38 @@ function MainContent() {
   const [pushToken, setPushToken] = useState(null);
   const [winData, setWinData] = useState(null);
   const [showConfetti, setShowConfetti] = useState(false);
+
+  const { whatsAppFabHidden, setWhatsAppFabHidden } = useFloatingFab();
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    initAnalytics();
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      showSub?.remove?.();
+      hideSub?.remove?.();
+    };
+  }, []);
+
+  const getActiveRouteName = useCallback((state) => {
+    if (!state || !Array.isArray(state.routes) || state.routes.length === 0) return null;
+    const index = typeof state.index === 'number' ? state.index : 0;
+    const route = state.routes[index] || state.routes[0];
+    if (!route) return null;
+    if (route.state) return getActiveRouteName(route.state);
+    return route.name || null;
+  }, []);
+
+  // Ocultar el FAB en cualquier pantalla que no sea la pestaña principal de Rifas.
+  const handleNavStateChange = useCallback((state) => {
+    const active = getActiveRouteName(state);
+    const shouldShow = active === 'Rifas';
+    setWhatsAppFabHidden(!shouldShow);
+
+    // Analytics: best-effort
+    logScreenView(active);
+  }, [getActiveRouteName, setWhatsAppFabHidden]);
 
   const persistTokens = useCallback(
     async (at, rt, usr, opts = {}) => {
@@ -95,6 +139,12 @@ function MainContent() {
   useEffect(() => {
     if (!accessToken) {
       setModulesConfig(null);
+      setAnalyticsUser(null);
+      try {
+        Sentry?.Native?.setUser?.(null);
+      } catch (_e) {
+        // no-op
+      }
       return;
     }
     (async () => {
@@ -109,6 +159,17 @@ function MainContent() {
       }
     })();
   }, [accessToken, api]);
+
+  useEffect(() => {
+    if (user?.id) setAnalyticsUser(user.id);
+    try {
+      if (user?.id) {
+        Sentry?.Native?.setUser?.({ id: String(user.id) });
+      }
+    } catch (_e) {
+      // no-op
+    }
+  }, [user?.id]);
 
   const handleCloseConfetti = async () => {
     setShowConfetti(false);
@@ -140,6 +201,13 @@ function MainContent() {
 
   useEffect(() => {
     (async () => {
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'default',
+          importance: Notifications.AndroidImportance.DEFAULT
+        });
+      }
+
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
       if (existingStatus !== 'granted') {
@@ -158,12 +226,29 @@ function MainContent() {
   }, []);
 
   useEffect(() => {
+    const notifSub = Notifications.addNotificationReceivedListener(() => {
+      // no-op
+    });
+    const respSub = Notifications.addNotificationResponseReceivedListener(() => {
+      // no-op
+    });
+    return () => {
+      notifSub?.remove?.();
+      respSub?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!pushToken || !accessToken) return;
     (async () => {
       try {
         await api('/me/push-token', { method: 'POST', body: JSON.stringify({ token: pushToken }) });
       } catch (_err) {
-        // Silenciar errores de registro de token
+        try {
+          Sentry?.captureException?.(_err);
+        } catch (_e) {
+          // no-op
+        }
       }
     })();
   }, [pushToken, accessToken, api]);
@@ -200,7 +285,7 @@ function MainContent() {
   return (
     <AppErrorBoundary onLogout={accessToken ? logout : undefined}>
       <>
-        <NavigationContainer>
+        <NavigationContainer onStateChange={handleNavStateChange}>
           <StatusBar style="auto" />
           <Stack.Navigator
             screenOptions={{
@@ -231,28 +316,30 @@ function MainContent() {
                           onLogout={logout}
                         />
                         {/* WhatsApp Floating Button */}
-                        <TouchableOpacity
-                          onPress={() => Linking.openURL('https://wa.me/584227930168')}
-                          style={{
-                            position: 'absolute',
-                            bottom: 92,
-                            left: 16,
-                            backgroundColor: '#25D366',
-                            width: 60,
-                            height: 60,
-                            borderRadius: 30,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            elevation: 5,
-                            shadowColor: '#000',
-                            shadowOffset: { width: 0, height: 2 },
-                            shadowOpacity: 0.3,
-                            shadowRadius: 3,
-                            zIndex: 1000
-                          }}
-                        >
-                          <Ionicons name="logo-whatsapp" size={32} color="#fff" />
-                        </TouchableOpacity>
+                        {(!keyboardVisible && !whatsAppFabHidden) ? (
+                          <TouchableOpacity
+                            onPress={() => Linking.openURL('https://wa.me/584227930168')}
+                            style={{
+                              position: 'absolute',
+                              bottom: 92,
+                              left: 16,
+                              backgroundColor: '#25D366',
+                              width: 60,
+                              height: 60,
+                              borderRadius: 30,
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              elevation: 5,
+                              shadowColor: '#000',
+                              shadowOffset: { width: 0, height: 2 },
+                              shadowOpacity: 0.3,
+                              shadowRadius: 3,
+                              zIndex: 1000
+                            }}
+                          >
+                            <Ionicons name="logo-whatsapp" size={32} color="#fff" />
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
                     </SafeAreaView>
                   )}
@@ -283,7 +370,9 @@ function MainContent() {
 export default function Main() {
   return (
     <ToastProvider>
-      <MainContent />
+      <FloatingFabProvider>
+        <MainContent />
+      </FloatingFabProvider>
     </ToastProvider>
   );
 }

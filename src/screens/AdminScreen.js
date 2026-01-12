@@ -56,6 +56,17 @@ const normalizeRemoteUri = (uri) => {
   const raw = typeof uri === 'string' ? uri.trim() : String(uri || '').trim();
   if (!raw) return '';
 
+  // Evitar espacios/saltos en data URI (a veces rompe el render en Android)
+  if (/^data:/i.test(raw)) {
+    const commaIndex = raw.indexOf(',');
+    if (commaIndex !== -1) {
+      const head = raw.slice(0, commaIndex + 1);
+      const body = raw.slice(commaIndex + 1).replace(/\s+/g, '');
+      return `${head}${body}`;
+    }
+    return raw.replace(/\s+/g, '');
+  }
+
   if (/^(https?:|file:|content:|data:)/i.test(raw)) return raw;
   if (raw.startsWith('//')) return `https:${raw}`;
 
@@ -63,6 +74,14 @@ const normalizeRemoteUri = (uri) => {
   if (!base) return raw;
   if (raw.startsWith('/')) return `${base}${raw}`;
   return `${base}/${raw}`;
+};
+
+const isLikelyImageUri = (uri) => {
+  const raw = typeof uri === 'string' ? uri.trim() : String(uri || '').trim();
+  if (!raw) return false;
+  if (/^data:image\//i.test(raw)) return true;
+  if (/^https?:/i.test(raw) && /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(raw)) return true;
+  return false;
 };
 
 const formatTxTypeLabel = (rawType) => {
@@ -1044,16 +1063,48 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   const loadManualPayments = useCallback(async (filtersOverride) => {
     setLoadingPayments(true);
-    const filters = filtersOverride && typeof filtersOverride === 'object' ? filtersOverride : paymentFilters;
-    const params = new URLSearchParams();
-    if (filters.raffleId) params.append('raffleId', String(filters.raffleId).trim());
-    if (filters.status) params.append('status', String(filters.status).trim());
-    if (filters.reference) params.append('reference', String(filters.reference).trim());
-    const query = params.toString() ? `?${params.toString()}` : '';
-    const { res, data } = await api(`/admin/manual-payments${query}`);
-    if (res.ok) setPayments(Array.isArray(data) ? data : []);
-    setLoadingPayments(false);
+    try {
+      const filters = filtersOverride && typeof filtersOverride === 'object' ? filtersOverride : paymentFilters;
+      const params = new URLSearchParams();
+      if (filters.raffleId) params.append('raffleId', String(filters.raffleId).trim());
+      if (filters.status) params.append('status', String(filters.status).trim());
+      if (filters.reference) params.append('reference', String(filters.reference).trim());
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const { res, data } = await api(`/admin/manual-payments${query}`);
+      if (res.ok) {
+        setPayments(Array.isArray(data) ? data : []);
+      } else {
+        setPayments([]);
+      }
+    } catch (_err) {
+      setPayments([]);
+    } finally {
+      setLoadingPayments(false);
+    }
   }, [api, paymentFilters]);
+
+  const handleSelectSuperadminAdmin = useCallback((admin) => {
+    setSaSelectedAdmin(admin || null);
+
+    // Resetear selección de rifa para evitar estados inválidos
+    setTicketFilters((s) => ({ ...s, raffleId: '' }));
+    setPaymentFilters((s) => ({ ...s, raffleId: '' }));
+
+    setVerifierResult(null);
+    setTicketVerifyQuery('');
+    setSaAdminPickerVisible(false);
+
+    // Si estamos en Pagos Manuales, recargar lista con el nuevo contexto.
+    if (activeSection === 'payments') {
+      setTimeout(() => {
+        try {
+          loadManualPayments({ ...paymentFilters, raffleId: '' });
+        } catch (_e) {
+          // ignore
+        }
+      }, 50);
+    }
+  }, [activeSection, loadManualPayments, paymentFilters]);
 
   const loadTickets = useCallback(async () => {
     if (!String(ticketFilters?.raffleId || '').trim()) {
@@ -1098,15 +1149,21 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   }, [raffles]);
 
   const activeRafflesForPayments = useMemo(() => {
-    const list = Array.isArray(raffles) ? raffles : [];
-    return list
+    // Superadmin: primero elige el admin (para no listar cientos/miles de rifas)
+    const base = isSuperadmin
+      ? (Array.isArray(saSelectedAdmin?.activeRaffles) ? saSelectedAdmin.activeRaffles : [])
+      : (Array.isArray(raffles) ? raffles : []);
+
+    return base
+      .map(normalizeRaffle)
+      .filter(Boolean)
       .filter((r) => String(r?.status || '').toLowerCase() === 'active')
       .sort((a, b) => {
         const ad = a?.activatedAt || a?.createdAt;
         const bd = b?.activatedAt || b?.createdAt;
         return new Date(bd || 0).getTime() - new Date(ad || 0).getTime();
       });
-  }, [raffles]);
+  }, [isSuperadmin, saSelectedAdmin?.activeRaffles, raffles]);
 
   const selectedPaymentRaffleLabel = useMemo(() => {
     const id = String(paymentFilters?.raffleId || '').trim();
@@ -1142,6 +1199,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   useEffect(() => {
     if (activeSection !== 'tickets') return;
+    if (!isSuperadmin) return;
+    loadSuperadminActiveRaffles();
+  }, [activeSection, isSuperadmin, loadSuperadminActiveRaffles]);
+
+  useEffect(() => {
+    if (activeSection !== 'payments') return;
     if (!isSuperadmin) return;
     loadSuperadminActiveRaffles();
   }, [activeSection, isSuperadmin, loadSuperadminActiveRaffles]);
@@ -1764,8 +1827,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   };
 
   useEffect(() => {
-    if (activeSection === 'payments') loadManualPayments();
-  }, [activeSection, paymentFilters.status, loadManualPayments]);
+    if (activeSection === 'payments') {
+      loadManualPayments();
+      return;
+    }
+    // Evitar que queden overlays abiertos “fuera del apartado” al salir.
+    if (proofViewer?.visible) closeProofViewer();
+    if (paymentRafflePickerVisible) setPaymentRafflePickerVisible(false);
+  }, [activeSection, paymentFilters.status, loadManualPayments, proofViewer?.visible, paymentRafflePickerVisible]);
 
   const updateStyle = async () => {
     if (!styleForm.raffleId) return Alert.alert('Falta rifa', 'Selecciona una rifa.');
@@ -1807,7 +1876,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
 
   const paymentKPIs = useMemo(() => {
     const byStatus = payments.reduce((acc, p) => {
-      const key = p.status || 'pending';
+      const key = String(p?.status || 'pending').toLowerCase();
       acc[key] = (acc[key] || 0) + 1;
       return acc;
     }, {});
@@ -3122,11 +3191,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                                 <TouchableOpacity
                                   key={String(a?.id)}
                                   onPress={() => {
-                                    setSaSelectedAdmin(a);
-                                    setTicketFilters((s) => ({ ...s, raffleId: '' }));
-                                    setVerifierResult(null);
-                                    setTicketVerifyQuery('');
-                                    setSaAdminPickerVisible(false);
+                                    handleSelectSuperadminAdmin(a);
                                   }}
                                   style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', marginBottom: 10 }}
                                 >
@@ -3208,7 +3273,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
         ) : activeSection === 'payments' ? (
             <View style={{ flex: 1, paddingHorizontal: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-                  <TouchableOpacity onPress={() => setActiveSection(null)} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      closeProofViewer();
+                      setPaymentRafflePickerVisible(false);
+                      setActiveSection(null);
+                    }}
+                    style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }}
+                  >
                     <Text style={{ color: '#fff', fontWeight: '800' }}>Cerrar</Text>
                   </TouchableOpacity>
                   <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Pagos Manuales</Text>
@@ -3217,11 +3289,16 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               <FlatList
                 data={payments}
                 keyExtractor={(item) => item.id || Math.random().toString()}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingBottom: 24 }}
                 renderItem={({ item: p }) => {
                   const buyer = p.user || {};
                   const status = String(p.status || 'pending').toLowerCase();
                   const statusColor = status === 'approved' ? '#4ade80' : status === 'rejected' ? '#f87171' : '#fbbf24';
                   const canAct = status === 'pending';
+                  const proofUri = p?.proof ? normalizeRemoteUri(p.proof) : '';
+                  const hasProof = !!proofUri;
+                  const canPreviewProof = hasProof && isLikelyImageUri(proofUri);
                   return (
                     <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: 12, borderRadius: 12, marginBottom: 10 }}>
                       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -3239,33 +3316,39 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.email || '—'}</Text>
                         <Text style={{ color: '#cbd5e1', fontSize: 12 }}>{buyer.state || '—'}</Text>
                       </View>
-                      {p.proof ? (
+                      {hasProof ? (
                         <TouchableOpacity
                           onPress={() => {
                             setProofImageLoading(true);
                             setProofImageError(false);
-                            setProofViewer({ visible: true, uri: normalizeRemoteUri(p.proof) });
+                            setProofViewer({ visible: true, uri: proofUri });
                           }}
                         >
                           <Text style={{ color: palette.primary, textDecorationLine: 'underline', marginVertical: 4 }}>Ver Comprobante</Text>
                         </TouchableOpacity>
                       ) : null}
-                      {p.proof ? (
+                      {canPreviewProof ? (
                         <TouchableOpacity
                           onPress={() => {
                             setProofImageLoading(true);
                             setProofImageError(false);
-                            setProofViewer({ visible: true, uri: normalizeRemoteUri(p.proof) });
+                            setProofViewer({ visible: true, uri: proofUri });
                           }}
                           activeOpacity={0.9}
                           style={{ marginTop: 6, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)' }}
                         >
                           <Image
-                            source={{ uri: normalizeRemoteUri(p.proof) }}
+                            source={{ uri: proofUri }}
                             style={{ width: '100%', height: 120, backgroundColor: 'rgba(255,255,255,0.04)' }}
                             resizeMode="cover"
                           />
                         </TouchableOpacity>
+                      ) : hasProof ? (
+                        <View style={{ marginTop: 6, padding: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' }}>
+                          <Text style={{ color: '#94a3b8', fontSize: 12 }}>
+                            Comprobante adjunto, pero no es imagen previsualizable aquí.
+                          </Text>
+                        </View>
                       ) : null}
                       {canAct ? (
                         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
@@ -3291,6 +3374,26 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 ListHeaderComponent={
                   <>
                     <Text style={styles.muted}>Pagos reportados por usuarios.</Text>
+
+                    {isSuperadmin ? (
+                      <View style={{ marginTop: 10, marginBottom: 6 }}>
+                        <TouchableOpacity
+                          onPress={() => setSaAdminPickerVisible(true)}
+                          style={{ paddingVertical: 12, paddingHorizontal: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '900', flex: 1 }} numberOfLines={1}>
+                            {saSelectedAdmin?.name || saSelectedAdmin?.email || 'Seleccionar admin'}
+                          </Text>
+                          <Ionicons name="chevron-down" size={18} color={palette.muted} />
+                        </TouchableOpacity>
+                        {!saSelectedAdmin?.id ? (
+                          <Text style={{ color: '#fbbf24', marginTop: 6, fontSize: 12 }}>
+                            Para verificar pagos, primero selecciona el admin (rifero) y luego la rifa.
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
 
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 }}>
                         <View style={{ flex: 1, marginRight: 8, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.05)' }}>
@@ -3347,7 +3450,11 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                         ].map(opt => (
                         <TouchableOpacity
                             key={opt.id || 'all'}
-                            onPress={() => setPaymentFilters(s => ({ ...s, status: opt.id }))}
+                        onPress={() => {
+                          const next = { ...paymentFilters, status: opt.id };
+                          setPaymentFilters(next);
+                          loadManualPayments(next);
+                        }}
                             style={{ paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: paymentFilters.status === opt.id ? 'rgba(74,222,128,0.15)' : 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: paymentFilters.status === opt.id ? '#4ade80' : 'rgba(255,255,255,0.08)' }}
                         >
                             <Text style={{ color: paymentFilters.status === opt.id ? '#4ade80' : '#e2e8f0', fontWeight: '700' }}>{opt.label}</Text>
@@ -4393,28 +4500,43 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               </TouchableOpacity>
               {proofViewer.uri ? (
                 <>
-                  {proofImageLoading ? <ActivityIndicator color="#fff" style={{ marginBottom: 12 }} /> : null}
-                  <Image
-                    source={{ uri: proofViewer.uri }}
-                    style={{ width: '90%', height: '70%', borderRadius: 12, opacity: proofImageLoading ? 0.6 : 1 }}
-                    resizeMode="contain"
-                    onLoadEnd={() => setProofImageLoading(false)}
-                    onError={() => {
-                      setProofImageLoading(false);
-                      setProofImageError(true);
-                    }}
-                  />
+                  {isLikelyImageUri(proofViewer.uri) ? (
+                    <>
+                      {proofImageLoading ? <ActivityIndicator color="#fff" style={{ marginBottom: 12 }} /> : null}
+                      <Image
+                        source={{ uri: proofViewer.uri }}
+                        style={{ width: '90%', height: '70%', borderRadius: 12, opacity: proofImageLoading ? 0.6 : 1 }}
+                        resizeMode="contain"
+                        onLoadEnd={() => setProofImageLoading(false)}
+                        onError={() => {
+                          setProofImageLoading(false);
+                          setProofImageError(true);
+                        }}
+                      />
 
-                  {proofImageError ? (
-                    <Text style={{ color: '#fff', marginTop: 10, textAlign: 'center' }}>
-                      No se pudo cargar el comprobante.
-                    </Text>
-                  ) : null}
+                      {proofImageError ? (
+                        <Text style={{ color: '#fff', marginTop: 10, textAlign: 'center' }}>
+                          No se pudo cargar el comprobante.
+                        </Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <View style={{ width: '90%', padding: 16, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)' }}>
+                      <Text style={{ color: '#fff', fontWeight: '900', textAlign: 'center' }}>Comprobante no previsualizable</Text>
+                      <Text style={{ color: '#cbd5e1', marginTop: 8, textAlign: 'center' }}>
+                        Este comprobante no es una imagen o no se puede renderizar aquí.
+                      </Text>
+                    </View>
+                  )}
 
                   <TouchableOpacity
                     onPress={async () => {
                       try {
-                        await Linking.openURL(proofViewer.uri);
+                        const uri = String(proofViewer.uri || '').trim();
+                        if (!/^https?:/i.test(uri)) {
+                          return Alert.alert('No disponible', 'Este comprobante no se puede abrir en navegador.');
+                        }
+                        await Linking.openURL(uri);
                       } catch (_e) {
                         Alert.alert('Error', 'No se pudo abrir el comprobante.');
                       }
@@ -4445,6 +4567,24 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16, marginBottom: 10 }}>Seleccionar rifa (activas)</Text>
 
                 <ScrollView>
+                  {isSuperadmin && !saSelectedAdmin?.id ? (
+                    <View style={{ paddingVertical: 16 }}>
+                      <Text style={{ color: '#fbbf24', textAlign: 'center', fontWeight: '800' }}>Selecciona un admin primero</Text>
+                      <Text style={{ color: '#94a3b8', textAlign: 'center', marginTop: 8 }}>
+                        Como superadmin, el verificador de pagos funciona por admin → rifa.
+                      </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setPaymentRafflePickerVisible(false);
+                          setSaAdminPickerVisible(true);
+                        }}
+                        style={{ marginTop: 14, paddingVertical: 12, borderRadius: 12, backgroundColor: palette.primary, alignItems: 'center' }}
+                      >
+                        <Text style={{ color: '#fff', fontWeight: '900' }}>Seleccionar admin</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+
                   <TouchableOpacity
                     onPress={() => {
                       const next = { ...paymentFilters, raffleId: '' };
@@ -4452,7 +4592,8 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                       loadManualPayments(next);
                       setPaymentRafflePickerVisible(false);
                     }}
-                    style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 8 }}
+                    disabled={isSuperadmin && !saSelectedAdmin?.id}
+                    style={{ paddingVertical: 12, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 8, opacity: isSuperadmin && !saSelectedAdmin?.id ? 0.5 : 1 }}
                   >
                     <Text style={{ color: '#fff', fontWeight: '800' }}>Todas las rifas activas</Text>
                     <Text style={{ color: '#94a3b8', fontSize: 12 }}>Quitar filtro por rifa</Text>

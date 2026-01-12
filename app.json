@@ -4,7 +4,7 @@
     "slug": "megarifas-mobile-rifaapk",
     "scheme": "megarifas",
     "owner": "rifaapk",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,7 @@
     ],
     "android": {
       "package": "com.megarifas.app",
-      "versionCode": 2,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
@@ -35,12 +35,15 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.megarifas.app",
-      "buildNumber": "1.0.1"
+      "buildNumber": "1.0.3"
     },
     "extra": {
       "eas": {
         "projectId": "6d2e9b8a-a626-4761-baa1-0b61882210ec"
       }
-    }
+    },
+    "plugins": [
+      "sentry-expo"
+    ]
   }
 }

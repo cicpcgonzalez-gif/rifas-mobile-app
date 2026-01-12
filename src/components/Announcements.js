@@ -15,7 +15,18 @@ export default function Announcements({ api, onShowProfile }) {
   const load = useCallback(async () => {
     setLoading(true);
     const { res, data } = await api('/announcements');
-    if (res.ok) setItems(data);
+    if (res.ok) {
+      setItems(data);
+      // Hidratar reacción del usuario si el backend la envía
+      if (Array.isArray(data)) {
+        const nextMy = {};
+        for (const a of data) {
+          const t = String(a?.myReaction || '').toUpperCase();
+          if (t === 'LIKE' || t === 'HEART') nextMy[a.id] = t;
+        }
+        setMyReactions(nextMy);
+      }
+    }
     setLoading(false);
   }, [api]);
 
