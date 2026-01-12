@@ -1,6 +1,11 @@
 ﻿node_modules
 .expo
 .expo/
+
+# Env local
+.env
+.env.*
+!.env.example
 android/jdk17/
 android/jdk17.zip
 android/jdk17_temp/
@@ -34,3 +39,12 @@ android/app/build/
 logcat*.txt
 ui_*.xml
 scan-jsx-text.js
+
+# Sentry Config File
+sentry.properties
+
+# Sentry wizard (binario local)
+sentry-wizard.exe
+
+# Local Android SDK path
+android/local.properties

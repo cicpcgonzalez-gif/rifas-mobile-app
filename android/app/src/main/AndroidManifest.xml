@@ -32,5 +32,17 @@
       </intent-filter>
     </activity>
     <activity android:name="com.facebook.react.devsupport.DevSettingsActivity" android:exported="false"/>
-  </application>
+  
+    <!-- Required: set your sentry.io project identifier (DSN) -->
+    <meta-data android:name="io.sentry.dsn" android:value="https://adb66f3bcb55ed3baab4e281cd76446b@o4510585384337408.ingest.us.sentry.io/4510585386827776" />
+
+    <!-- enable automatic breadcrumbs for user interactions (clicks, swipes, scrolls) -->
+    <meta-data android:name="io.sentry.traces.user-interaction.enable" android:value="true" />
+    <!-- Para producción: evita adjuntar screenshots / jerarquía (puede contener datos sensibles) -->
+    <meta-data android:name="io.sentry.attach-screenshot" android:value="false" />
+    <meta-data android:name="io.sentry.attach-view-hierarchy" android:value="false" />
+
+    <!-- Performance sample-rate (producción): mantener bajo para costo/ruido -->
+    <meta-data android:name="io.sentry.traces.sample-rate" android:value="0.1" />
+</application>
 </manifest>

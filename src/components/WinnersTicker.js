@@ -32,27 +32,37 @@ export default function WinnersTicker({ api, enabled }) {
     let alive = true;
 
     const poll = async () => {
-      const { res, data } = await api('/feed/instant-wins?take=80');
-      if (!alive) return;
-      if (!res?.ok || !Array.isArray(data)) return;
+      try {
+        const { res, data } = await api('/feed/instant-wins?take=20');
+        if (!alive) return;
+        if (!res?.ok || !Array.isArray(data)) return;
 
-      // API viene ordenado desc (más nuevos primero). Para ticker, agregamos al final en orden asc.
-      const ordered = [...data].reverse();
-      const next = [];
-      for (const w of ordered) {
-        const id = w?.id;
-        if (!id) continue;
-        if (seenIdsRef.current.has(id)) continue;
-        seenIdsRef.current.add(id);
-        next.push(w);
-      }
-      if (next.length > 0) {
-        setItems((prev) => [...(prev || []), ...next]);
+        // API viene ordenado desc (más nuevos primero). Para ticker, agregamos al final en orden asc.
+        const ordered = [...data].reverse();
+        const next = [];
+        for (const w of ordered) {
+          const id = w?.id;
+          if (!id) continue;
+          if (seenIdsRef.current.has(id)) continue;
+          seenIdsRef.current.add(id);
+          next.push(w);
+        }
+        if (next.length > 0) {
+          setItems((prev) => {
+            const merged = [...(prev || []), ...next];
+            // Capear historial para evitar crecimiento ilimitado en memoria
+            return merged.slice(-200);
+          });
+        }
+      } catch (e) {
+        // Evitar que fallos de red frecuentes saturen la UI en datos móviles
+        console.log('WinnersTicker poll error', e?.message || e);
       }
     };
 
     poll();
-    const id = setInterval(poll, 10_000);
+    // Reducir frecuencia de polling para conexiones móviles (menos gasto y menos latencia percibida)
+    const id = setInterval(poll, 60_000);
 
     return () => {
       alive = false;

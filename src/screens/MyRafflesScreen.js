@@ -6,7 +6,8 @@ import {
   FlatList,
   ActivityIndicator,
   TouchableOpacity,
-  Alert
+  Alert,
+  Modal
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +17,7 @@ import { palette } from '../theme';
 import { styles } from '../styles';
 import { ProgressBar } from '../components/UI';
 import { formatTicketNumber } from '../utils';
+import { getArchivedTickets, upsertArchivedTickets, deleteArchivedTicket, clearClosedArchivedTickets } from '../services/ticketArchive';
 
 const formatReceiptDateTime = (value) => {
   if (!value) return '—';
@@ -68,6 +70,10 @@ export default function MyRafflesScreen({ api, navigation }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [archiveVisible, setArchiveVisible] = useState(false);
+  const [archived, setArchived] = useState([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+
   const HIDDEN_KEY = 'hidden_ticket_raffle_ids_v1';
 
   const loadHiddenRaffleIds = useCallback(async () => {
@@ -113,6 +119,13 @@ export default function MyRafflesScreen({ api, navigation }) {
       const hidden = await loadHiddenRaffleIds();
       const { res, data } = await api('/me/raffles');
       if (res.ok && Array.isArray(data)) {
+        // Guardar un respaldo local (para que el usuario conserve sus compras aunque luego cambie el servidor o oculte entradas)
+        try {
+          await upsertArchivedTickets(data);
+        } catch (_e) {
+          // Silenciar
+        }
+
         const list = data
           .filter(Boolean)
           .filter((it) => {
@@ -131,6 +144,138 @@ export default function MyRafflesScreen({ api, navigation }) {
     }
     setLoading(false);
   }, [api, loadHiddenRaffleIds]);
+
+  const loadArchive = useCallback(async () => {
+    setArchiveLoading(true);
+    try {
+      const list = await getArchivedTickets();
+      setArchived(Array.isArray(list) ? list : []);
+    } catch (_e) {
+      setArchived([]);
+    }
+    setArchiveLoading(false);
+  }, []);
+
+  const openArchive = useCallback(() => {
+    setArchiveVisible(true);
+    loadArchive();
+  }, [loadArchive]);
+
+  const removeArchived = useCallback(async (archiveId) => {
+    const confirmed = await new Promise((resolve) => {
+      // eslint-disable-next-line no-undef
+      Alert.alert(
+        'Borrar ticket guardado',
+        'Esto elimina el respaldo local de este ticket en tu teléfono. ¿Deseas continuar?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Borrar', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+
+    try {
+      await deleteArchivedTicket(archiveId);
+      await loadArchive();
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [loadArchive]);
+
+  const removeAllArchived = useCallback(async () => {
+    const confirmed = await new Promise((resolve) => {
+      // eslint-disable-next-line no-undef
+      Alert.alert(
+        'Borrar todos los tickets guardados',
+        'Esto elimina SOLO los tickets CERRADOS guardados en este teléfono. Los activos se conservan hasta resultados. ¿Deseas continuar?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Borrar todo', style: 'destructive', onPress: () => resolve(true) }
+        ]
+      );
+    });
+    if (!confirmed) return;
+
+    try {
+      await clearClosedArchivedTickets();
+      await loadArchive();
+    } catch (_e) {
+      // Silenciar
+    }
+  }, [loadArchive]);
+
+  const renderArchivedItem = ({ item }) => {
+    if (!item) return null;
+    const raffleStatus = String(item?.raffleStatus || '').toLowerCase();
+    const isClosed = raffleStatus === 'closed';
+    if (!isClosed) return null;
+
+    const purchasedAt = item?.purchasedAt || item?.createdAt;
+    const whenLabel = formatReceiptDateTime(purchasedAt);
+    const numbers = Array.isArray(item?.numbers) ? item.numbers : [];
+
+    return (
+      <View style={{
+        backgroundColor: '#ffffff',
+        borderRadius: 14,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(15, 23, 42, 0.18)',
+        marginBottom: 12
+      }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text style={{ color: '#0f172a', fontSize: 13, fontWeight: '900' }} numberOfLines={2}>{item?.raffleTitle || 'Rifa'}</Text>
+            <Text style={{ color: 'rgba(15, 23, 42, 0.6)', fontSize: 11, marginTop: 2 }}>{whenLabel}</Text>
+          </View>
+          <View style={{
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: '#94a3b8',
+            backgroundColor: 'rgba(15, 23, 42, 0.04)'
+          }}>
+            <Text style={{ color: '#334155', fontSize: 10, fontWeight: '900', textTransform: 'uppercase' }}>Cerrado</Text>
+          </View>
+        </View>
+
+        <View style={{ marginTop: 10 }}>
+          <Text style={{ color: 'rgba(15, 23, 42, 0.65)', fontSize: 10, fontWeight: '800', textTransform: 'uppercase' }}>Números</Text>
+          {numbers.length > 0 ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+              {numbers.slice(0, 30).map((n, idx) => (
+                <View
+                  key={`${item.archiveId}-${n}-${idx}`}
+                  style={{
+                    paddingVertical: 6,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: 'rgba(15, 23, 42, 0.10)',
+                    backgroundColor: 'rgba(15, 23, 42, 0.04)'
+                  }}
+                >
+                  <Text style={{ color: '#0f172a', fontSize: 12, fontFamily: 'monospace', fontWeight: '800' }}>
+                    {formatTicketNumber(n, item?.digits)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={{ color: 'rgba(15, 23, 42, 0.55)', fontSize: 12, marginTop: 6 }}>—</Text>
+          )}
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+          <TouchableOpacity onPress={() => removeArchived(item.archiveId)}>
+            <Text style={{ color: '#f87171', fontWeight: '900', fontSize: 13 }}>Borrar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -337,12 +482,79 @@ export default function MyRafflesScreen({ api, navigation }) {
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
+        <Modal
+          visible={archiveVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setArchiveVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: '#0b1220',
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              maxHeight: '85%',
+              padding: 16
+            }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <View>
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '900' }}>Tickets cerrados</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.65)', fontSize: 12, marginTop: 2 }}>Respaldo guardado en este teléfono</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <TouchableOpacity onPress={removeAllArchived} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(248, 113, 113, 0.16)' }}>
+                    <Text style={{ color: '#f87171', fontWeight: '900', fontSize: 12 }}>Borrar todo</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setArchiveVisible(false)}>
+                    <Ionicons name="close" size={24} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {archiveLoading ? (
+                <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                  <ActivityIndicator color={palette.primary} size="large" />
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 10 }}>Cargando...</Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={(Array.isArray(archived) ? archived : []).filter((t) => String(t?.raffleStatus || '').toLowerCase() === 'closed')}
+                  keyExtractor={(it, idx) => String(it?.archiveId || `arch-${idx}`)}
+                  renderItem={renderArchivedItem}
+                  ListEmptyComponent={
+                    <View style={{ alignItems: 'center', paddingVertical: 28 }}>
+                      <Ionicons name="archive-outline" size={48} color="rgba(255,255,255,0.12)" />
+                      <Text style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginTop: 12 }}>
+                        No hay tickets cerrados guardados aún.
+                      </Text>
+                    </View>
+                  }
+                />
+              )}
+            </View>
+          </View>
+        </Modal>
+
         <FlatList
           data={items}
           keyExtractor={(item, index) => item?.id || `ticket-${index}`}
           renderItem={renderTicket}
           contentContainerStyle={[styles.scroll, { paddingBottom: 100 }]}
-          ListHeaderComponent={<Text style={styles.title}>Mis Tickets</Text>}
+          ListHeaderComponent={
+            <View style={{ marginBottom: 12 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.title}>Mis Tickets</Text>
+                <TouchableOpacity
+                  onPress={openArchive}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  <Ionicons name="archive-outline" size={18} color="#fff" />
+                  <Text style={{ color: '#fff', fontWeight: '900', marginLeft: 8, fontSize: 12 }}>Cerrados</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={[styles.muted, { marginTop: 6 }]}>Aquí ves tus compras y rifas.</Text>
+            </View>
+          }
           ListEmptyComponent={
             loading ? (
               <View style={styles.loaderContainer}>
