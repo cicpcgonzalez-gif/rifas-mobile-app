@@ -387,6 +387,12 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   // Reports System
   const [legacyReports, setLegacyReports] = useState([]);
   const [legacyReportsLoading, setLegacyReportsLoading] = useState(false);
+  // Ticket validation (Superadmin/Admin)
+  const [validateSerial, setValidateSerial] = useState('');
+  const [validateRaffleId, setValidateRaffleId] = useState('');
+  const [validateNumber, setValidateNumber] = useState('');
+  const [validating, setValidating] = useState(false);
+  const [validateResult, setValidateResult] = useState(null);
 
   const loadLegacyReports = useCallback(async () => {
     setLegacyReportsLoading(true);
@@ -453,6 +459,35 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     },
     [api]
   );
+
+    // Validar ticket: usa el helper `api` pasado como prop (devuelve { res, data })
+    const validateTicket = useCallback(async () => {
+      setValidateResult(null);
+      setValidating(true);
+      try {
+        const payload = validateSerial
+          ? { serialNumber: String(validateSerial).trim() }
+          : { raffleId: validateRaffleId ? Number(validateRaffleId) : undefined, number: validateNumber ? Number(validateNumber) : undefined };
+
+        const { res, data } = await api('/admin/tickets/validate', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        if (res && res.ok) {
+          setValidateResult(data);
+          Alert.alert('Ticket validado', 'El ticket fue validado correctamente.');
+        } else {
+          const err = data?.error || 'No se pudo validar el ticket';
+          Alert.alert('Error', err);
+        }
+      } catch (e) {
+        console.log('validateTicket error:', e);
+        Alert.alert('Error', e?.message || 'Error al validar ticket');
+      } finally {
+        setValidating(false);
+      }
+    }, [api, validateSerial, validateRaffleId, validateNumber]);
 
   // Handle navigation params for editing
   useFocusEffect(
@@ -4480,6 +4515,40 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
               )}
             </View>
           )}
+
+
+              {activeSection === 'ticket_validate' && (
+                <View style={styles.card}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <TouchableOpacity onPress={() => setActiveSection(null)}><Ionicons name="arrow-back" size={24} color="#fff" /></TouchableOpacity>
+                    <Text style={[styles.title, { marginBottom: 0, marginLeft: 12, fontSize: 20 }]}>Validar Ticket</Text>
+                  </View>
+
+                  <Text style={styles.muted}>Valida tickets por número serial o por ID de rifa + número.</Text>
+
+                  <Text style={styles.section}>Serial del Ticket</Text>
+                  <TextInput style={styles.input} placeholder="Serial (ej: ABC123)" value={validateSerial} onChangeText={setValidateSerial} autoCapitalize="none" />
+
+                  <Text style={styles.section}>O Rifa y Número</Text>
+                  <TextInput style={styles.input} placeholder="ID Rifa" value={validateRaffleId} onChangeText={setValidateRaffleId} keyboardType="numeric" />
+                  <TextInput style={styles.input} placeholder="Número de ticket" value={validateNumber} onChangeText={setValidateNumber} keyboardType="numeric" />
+
+                  <FilledButton
+                    title={validating ? 'Validando...' : 'Validar Ticket'}
+                    onPress={validateTicket}
+                    loading={validating}
+                    disabled={validating}
+                    icon={<Ionicons name="checkmark-done-outline" size={18} color="#fff" />}
+                  />
+
+                  {validateResult ? (
+                    <View style={{ marginTop: 12, backgroundColor: 'rgba(255,255,255,0.04)', padding: 12, borderRadius: 8 }}>
+                      <Text style={{ color: '#fff', fontWeight: '900' }}>Resultado</Text>
+                      <Text style={{ color: palette.muted, fontSize: 12, marginTop: 6 }}>{JSON.stringify(validateResult)}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
 
 
 
