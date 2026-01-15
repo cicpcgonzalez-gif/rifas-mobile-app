@@ -1,0 +1,22 @@
+{
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/android/**/build/**": true,
+    "**/build/**": true,
+    "**/.git/**": true,
+    "**/releases/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/android/**/build": true,
+    "**/build": true,
+    "**/releases": true
+  },
+  "files.exclude": {
+    "**/.git": true,
+    "**/node_modules": true
+  },
+  "editor.formatOnSave": false,
+  "eslint.enable": true,
+  "typescript.tsc.autoDetect": "off"
+}
