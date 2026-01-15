@@ -705,7 +705,7 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [adminTransactions, setAdminTransactions] = useState([]);
   const [adminTxLoading, setAdminTxLoading] = useState(false);
   const [adminTxFilters, setAdminTxFilters] = useState({ status: '', q: '' });
-  const [styleForm, setStyleForm] = useState({ raffleId: null, bannerImage: '', gallery: [], themeColor: '#2563eb', terms: '', whatsapp: '', instagram: '' });
+  const [styleForm, setStyleForm] = useState({ raffleId: null, bannerImage: '', gallery: [], themeColor: '#2563eb', terms: '', whatsapp: '', instagram: '', missingNumberPolicy: { mode: 'owner_decides', minPercent: 0, postponeDays: 3 } });
   const [savingStyle, setSavingStyle] = useState(false);
   const [styleLoading, setStyleLoading] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -756,6 +756,52 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [winningNumberInput, setWinningNumberInput] = useState('');
   const [winnerRaffleId, setWinnerRaffleId] = useState(null);
   const [declaringWinner, setDeclaringWinner] = useState(false);
+  // Missing-number resolution UI state
+  const [missingResModalVisible, setMissingResModalVisible] = useState(false);
+  const [missingResTicketNumber, setMissingResTicketNumber] = useState('');
+  const [missingResContext, setMissingResContext] = useState(null); // { raffleId, winningNumber }
+
+  // Missing-number policy editor modal
+  const [policyModalVisible, setPolicyModalVisible] = useState(false);
+  const [policyLoading, setPolicyLoading] = useState(false);
+  const [policyForm, setPolicyForm] = useState({ mode: 'owner_decides', minPercent: 0, postponeDays: 3 });
+
+  const openPolicyModalFor = async (raffleId) => {
+    setPolicyModalVisible(true);
+    setPolicyLoading(true);
+    try {
+      const { res, data } = await api(`/admin/raffles/${raffleId}/missing-policy`);
+      if (res.ok && data?.policy) {
+        setPolicyForm({ mode: data.policy.mode || 'owner_decides', minPercent: Number(data.policy.minPercent || 0), postponeDays: Number(data.policy.postponeDays || 3) });
+        setStyleForm(s => ({ ...s, raffleId }));
+      } else {
+        Alert.alert('Error', 'No se pudo obtener la política');
+        setPolicyModalVisible(false);
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Error al obtener política');
+      setPolicyModalVisible(false);
+    } finally { setPolicyLoading(false); }
+  };
+
+  const savePolicy = async (raffleId) => {
+    setPolicyLoading(true);
+    try {
+      const body = { mode: policyForm.mode, minPercent: Number(policyForm.minPercent || 0), postponeDays: Number(policyForm.postponeDays || 3) };
+      const { res, data } = await api(`/admin/raffles/${raffleId}/missing-policy`, { method: 'POST', body: JSON.stringify(body) });
+      if (res.ok) {
+        Alert.alert('Éxito', 'Política guardada');
+        setPolicyModalVisible(false);
+        // Update local styleForm
+        setStyleForm(s => ({ ...s, missingNumberPolicy: { ...body } }));
+      } else {
+        Alert.alert('Error', data?.error || 'No se pudo guardar la política');
+      }
+    } catch (e) {
+      Alert.alert('Error', e?.message || 'Error al guardar la política');
+    } finally { setPolicyLoading(false); }
+  };
+
 
   const LOTTERIES = [
     'Super Gana (Lotería del Táchira)',
@@ -2188,7 +2234,9 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
             themeColor: styleForm.themeColor,
             whatsapp: styleForm.whatsapp,
             instagram: styleForm.instagram,
-            paymentMethods
+            paymentMethods,
+            // missingNumberPolicy puede ser gestionada por los organizadores
+            missingNumberPolicy: styleForm.missingNumberPolicy || { mode: 'owner_decides', minPercent: 0, postponeDays: 3 }
           }
         });
 
@@ -2548,16 +2596,53 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       body: JSON.stringify(body)
     });
     
-    setDeclaringWinner(false);
+      setDeclaringWinner(false);
     setWinnerModalVisible(false);
     
     if (res.ok) {
       Alert.alert('Éxito', data.message);
       loadRaffles();
       loadTickets();
+    } else if (res.status === 409 || data?.error === 'NUMBER_NOT_SOLD') {
+      // Número no vendido: mostrar opciones de resolución al admin
+      Alert.alert(
+        'Número no vendido',
+        `El número ${winningNumberInput} no fue vendido en esta rifa. ¿Cómo quieres proceder?`,
+        [
+          { text: 'Seleccionar aleatorio entre vendidos', onPress: () => resolveMissing('random_sold') },
+          { text: 'Posponer 3 días', onPress: () => resolveMissing('postpone', { postponeDays: 3 }) },
+          { text: 'Cerrar sin ganador', onPress: () => resolveMissing('close_no_winner') },
+          { text: 'Forzar manual', onPress: () => { setMissingResTicketNumber(String(winningNumberInput)); setMissingResContext({ raffleId: winnerRaffleId, winningNumber: winningNumberInput }); setMissingResModalVisible(true); } },
+          { text: 'Cancelar', style: 'cancel' }
+        ],
+        { cancelable: true }
+      );
     } else {
       Alert.alert('Error', data.error || 'No se pudo declarar el ganador');
     }
+  };
+
+  const resolveMissing = async (resolution, params = {}) => {
+    setDeclaringWinner(true);
+    try {
+      const body = { raffleId: winnerRaffleId, winningNumber: winningNumberInput, resolution, params };
+      const { res, data } = await api('/admin/winners/resolve-missing', { method: 'POST', body: JSON.stringify(body) });
+      setDeclaringWinner(false);
+      setMissingResModalVisible(false);
+      if (res.ok) {
+        Alert.alert('Éxito', data.message || 'Resuelto');
+        loadRaffles();
+        loadTickets();
+      } else {
+        Alert.alert('Error', data.error || 'No se pudo resolver');
+      }
+    } catch (e) {
+      setDeclaringWinner(false);
+      setMissingResModalVisible(false);
+      Alert.alert('Error', e?.message || 'Error al resolver');
+    }
+  };
+
   };
 
   const closeRaffle = async (raffleId) => {
@@ -4190,10 +4275,15 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                                 gallery: ensureArray(r.style?.gallery),
                                 themeColor: r.style?.themeColor || '#2563eb',
                                 whatsapp: r.style?.whatsapp || '',
-                                instagram: r.style?.instagram || ''
+                                instagram: r.style?.instagram || '',
+                                missingNumberPolicy: r.style?.missingNumberPolicy || { mode: 'owner_decides', minPercent: 0, postponeDays: 3 }
                               });
                             }} style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8 }}>
                               <Ionicons name="create-outline" size={20} color="#fff" />
+                            </TouchableOpacity>
+
+                            <TouchableOpacity onPress={() => openPolicyModalFor(r.id)} style={{ padding: 8, backgroundColor: 'rgba(99,102,241,0.12)', borderRadius: 8, marginLeft: 6 }}>
+                              <Ionicons name="settings-outline" size={20} color="#6366f1" />
                             </TouchableOpacity>
                             
                             {status !== 'closed' && (
@@ -5385,6 +5475,62 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                   style={{ flex: 1, padding: 16, borderRadius: 12, backgroundColor: '#fbbf24', alignItems: 'center' }}
                 >
                   <Text style={{ color: '#0b1224', fontWeight: '800' }}>SÍ, ES CORRECTO</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          animationType="slide"
+          transparent={true}
+          visible={missingResModalVisible}
+          onRequestClose={() => setMissingResModalVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Forzar Ganador Manualmente</Text>
+              <Text style={{ color: '#94a3b8', marginBottom: 20 }}>Ingresa el número de ticket que quieres declarar como ganador.</Text>
+              <TextInput style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 12, borderRadius: 8, fontSize: 18, marginBottom: 12 }} placeholder="Número de ticket" placeholderTextColor="#475569" value={missingResTicketNumber} onChangeText={setMissingResTicketNumber} keyboardType="numeric" />
+              <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+                <TouchableOpacity onPress={() => { setMissingResModalVisible(false); setMissingResTicketNumber(''); }} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => { const num = Number(missingResTicketNumber); if (!num) return Alert.alert('Error', 'Número inválido'); resolveMissing('force_manual', { ticketNumber: num }); }} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: '#fbbf24', alignItems: 'center' }}>
+                  <Text style={{ color: '#0b1224', fontWeight: '800' }}>Forzar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={policyModalVisible} transparent animationType="slide" onRequestClose={() => setPolicyModalVisible(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Política: número no vendido</Text>
+              <Text style={{ color: '#94a3b8', marginBottom: 12 }}>Define cómo se resuelve si el número que sale en la lotería no fue vendido.</Text>
+
+              <Text style={{ color: '#cbd5e1', marginTop: 8 }}>Modo</Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                {['owner_decides','auto_random_if_percent_sold','require_manual'].map((m) => (
+                  <TouchableOpacity key={m} onPress={() => setPolicyForm(p => ({ ...p, mode: m }))} style={{ padding: 8, borderRadius: 8, backgroundColor: policyForm.mode === m ? '#374151' : 'rgba(255,255,255,0.03)' }}>
+                    <Text style={{ color: policyForm.mode === m ? '#fff' : '#94a3b8' }}>{m.replace('_', ' ')}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={{ color: '#cbd5e1', marginTop: 12 }}>Umbral mínimo (%) — si eliges <Text style={{ fontWeight: '700' }}>auto_random_if_percent_sold</Text></Text>
+              <TextInput value={String(policyForm.minPercent)} onChangeText={(v) => setPolicyForm(p => ({ ...p, minPercent: Number(v || 0) }))} keyboardType="numeric" style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 8, borderRadius: 8, marginTop: 8 }} />
+
+              <Text style={{ color: '#cbd5e1', marginTop: 12 }}>Días de postergación por defecto</Text>
+              <TextInput value={String(policyForm.postponeDays)} onChangeText={(v) => setPolicyForm(p => ({ ...p, postponeDays: Number(v || 3) }))} keyboardType="numeric" style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 8, borderRadius: 8, marginTop: 8 }} />
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+                <TouchableOpacity onPress={() => setPolicyModalVisible(false)} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}>
+                  <Text style={{ color: '#fff' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => savePolicy(styleForm.raffleId)} disabled={policyLoading} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: '#6366f1', alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>{policyLoading ? 'Guardando...' : 'Guardar'}</Text>
                 </TouchableOpacity>
               </View>
             </View>
