@@ -766,6 +766,25 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
   const [policyLoading, setPolicyLoading] = useState(false);
   const [policyForm, setPolicyForm] = useState({ mode: 'owner_decides', minPercent: 0, postponeDays: 3 });
 
+  // Postpone modal for ad-hoc postpone while resolving a missing-number case
+  const [postponeModalVisible, setPostponeModalVisible] = useState(false);
+  const [postponeDaysInput, setPostponeDaysInput] = useState('3');
+
+  const openPostponeFor = (raffleId) => {
+    const raffle = raffles.find(r => String(r.id) === String(raffleId)) || null;
+    const defaultPostpone = raffle?.style?.missingNumberPolicy?.postponeDays || 3;
+    setPostponeDaysInput(String(defaultPostpone));
+    setPostponeModalVisible(true);
+  };
+
+  const confirmPostponeResolve = () => {
+    const days = Number(postponeDaysInput);
+    if (!Number.isFinite(days) || days < 0) return Alert.alert('Error', 'Días inválidos');
+    resolveMissing('postpone', { postponeDays: days });
+    setPostponeModalVisible(false);
+  };
+
+
   const openPolicyModalFor = async (raffleId) => {
     setPolicyModalVisible(true);
     setPolicyLoading(true);
@@ -2605,12 +2624,14 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
       loadTickets();
     } else if (res.status === 409 || data?.error === 'NUMBER_NOT_SOLD') {
       // Número no vendido: mostrar opciones de resolución al admin
+      const raffle = raffles.find(r => String(r.id) === String(winnerRaffleId)) || null;
+      const defaultPostpone = raffle?.style?.missingNumberPolicy?.postponeDays || 3;
       Alert.alert(
         'Número no vendido',
         `El número ${winningNumberInput} no fue vendido en esta rifa. ¿Cómo quieres proceder?`,
         [
           { text: 'Seleccionar aleatorio entre vendidos', onPress: () => resolveMissing('random_sold') },
-          { text: 'Posponer 3 días', onPress: () => resolveMissing('postpone', { postponeDays: 3 }) },
+          { text: 'Posponer...', onPress: () => { setPostponeDaysInput(String(defaultPostpone)); setPostponeModalVisible(true); } },
           { text: 'Cerrar sin ganador', onPress: () => resolveMissing('close_no_winner') },
           { text: 'Forzar manual', onPress: () => { setMissingResTicketNumber(String(winningNumberInput)); setMissingResContext({ raffleId: winnerRaffleId, winningNumber: winningNumberInput }); setMissingResModalVisible(true); } },
           { text: 'Cancelar', style: 'cancel' }
@@ -5531,6 +5552,27 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => savePolicy(styleForm.raffleId)} disabled={policyLoading} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: '#6366f1', alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '700' }}>{policyLoading ? 'Guardando...' : 'Guardar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={postponeModalVisible} transparent animationType="slide" onRequestClose={() => setPostponeModalVisible(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', padding: 20 }}>
+            <View style={{ backgroundColor: '#1e293b', borderRadius: 20, padding: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>Posponer resolución</Text>
+              <Text style={{ color: '#94a3b8', marginBottom: 12 }}>Introduce el número de días para posponer la resolución de este caso.</Text>
+
+              <Text style={{ color: '#cbd5e1', marginTop: 8 }}>Días</Text>
+              <TextInput value={postponeDaysInput} onChangeText={setPostponeDaysInput} keyboardType="numeric" style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', padding: 8, borderRadius: 8, marginTop: 8 }} />
+
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 18 }}>
+                <TouchableOpacity onPress={() => setPostponeModalVisible(false)} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center' }}>
+                  <Text style={{ color: '#fff' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => confirmPostponeResolve()} disabled={!postponeDaysInput} style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: '#fbbf24', alignItems: 'center' }}>
+                  <Text style={{ color: '#0b1224', fontWeight: '700' }}>Posponer</Text>
                 </TouchableOpacity>
               </View>
             </View>
