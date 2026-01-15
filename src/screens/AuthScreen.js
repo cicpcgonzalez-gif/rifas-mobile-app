@@ -80,6 +80,7 @@ export default function AuthScreen({ onAuth }) {
   });
   const [rememberMe, setRememberMe] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [registerAsOrganizer, setRegisterAsOrganizer] = useState(false);
   const [statePickerVisible, setStatePickerVisible] = useState(false);
   const [showDobPicker, setShowDobPicker] = useState(false);
 
@@ -191,7 +192,8 @@ export default function AuthScreen({ onAuth }) {
     setError('');
     try {
       const email = normalizeEmail(form.email);
-      const res = await fetch(`${API_URL}/register`, {
+      const endpoint = registerAsOrganizer ? `${API_URL}/organizers/register` : `${API_URL}/register`;
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, email })
@@ -200,8 +202,18 @@ export default function AuthScreen({ onAuth }) {
       if (!res.ok) {
         throw new Error(data.error || 'No se pudo registrar');
       }
-      
-      // Auto-login after register or show verification
+
+      if (registerAsOrganizer) {
+        Alert.alert('Solicitud enviada', 'Hemos recibido tu solicitud de organizador. Espera aprobación de un administrador.');
+        setMode('login');
+        setShowVerification(false);
+        setVerifyEmail(email);
+        setRegisterAsOrganizer(false);
+        setLoading(false);
+        return;
+      }
+
+      // Auto-login after register or show verification for normal users
       const serverUser = data?.user;
       const isVerified = serverUser?.verified === true;
       if (isVerified) {
@@ -600,6 +612,14 @@ export default function AuthScreen({ onAuth }) {
                   autoCapitalize="characters"
                   placeholderTextColor="#cbd5e1"
                 />
+                {/* Organizer self-registration option */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 }}
+                  onPress={() => setRegisterAsOrganizer((v) => !v)}
+                >
+                  <Ionicons name={registerAsOrganizer ? 'checkbox' : 'square-outline'} size={20} color={registerAsOrganizer ? palette.primary : '#cbd5e1'} />
+                  <Text style={{ color: '#cbd5e1' }}>Solicitar cuenta de organizador (requiere aprobación)</Text>
+                </TouchableOpacity>
                 
                 {/* Terms Checkbox */}
                 <TouchableOpacity 

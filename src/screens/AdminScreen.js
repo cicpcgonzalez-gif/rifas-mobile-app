@@ -891,15 +891,15 @@ export default function AdminScreen({ api, user, modulesConfig, onLogout }) {
     setTimeout(async () => {
       let foundTicket = null;
       if (ticketFilters.raffleId === lotteryCheck.raffleId && tickets.length > 0) {
-        foundTicket = tickets.find(t => String(t.number) === String(lotteryCheck.number));
+        foundTicket = tickets.find(t => Number(t.number) === Number(lotteryCheck.number));
       } else {
         const params = new URLSearchParams();
         params.append('raffleId', String(lotteryCheck.raffleId));
         params.append('number', String(lotteryCheck.number));
         params.append('take', '5');
         const { res, data } = await api(`/admin/tickets?${params.toString()}`);
-        if (res.ok && Array.isArray(data)) {
-           foundTicket = data?.find(t => String(t.number) === String(lotteryCheck.number));
+          if (res.ok && Array.isArray(data)) {
+            foundTicket = data?.find(t => Number(t.number) === Number(lotteryCheck.number));
         }
       }
 
