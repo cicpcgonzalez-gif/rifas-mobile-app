@@ -1,0 +1,15 @@
+{
+  "recommendations": [],
+  "unwantedRecommendations": [
+    "vscjava.vscode-gradle",
+    "ms-vscode.powershell",
+    "bradlc.vscode-tailwindcss",
+    "ms-vscode-remote.remote-containers",
+    "ms-azuretools.vscode-containers",
+    "ritwickdey.liveserver",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "ms-python.vscode-python-envs"
+  ]
+}
